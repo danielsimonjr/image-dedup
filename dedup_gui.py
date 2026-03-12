@@ -112,6 +112,17 @@ class DedupApp:
         )
         ssim_spin.pack(side=tk.LEFT, padx=(4, 16))
 
+        ttk.Label(thresh_frame, text="Min size (px):").pack(side=tk.LEFT)
+        self.min_size_var = tk.IntVar(value=50)
+        min_size_spin = ttk.Spinbox(
+            thresh_frame,
+            from_=1,
+            to=500,
+            textvariable=self.min_size_var,
+            width=5,
+        )
+        min_size_spin.pack(side=tk.LEFT, padx=(4, 16))
+
         self.status_var = tk.StringVar(value="Select a folder and click Scan.")
         ttk.Label(thresh_frame, textvariable=self.status_var).pack(
             side=tk.LEFT, padx=(16, 0)
@@ -237,7 +248,13 @@ class DedupApp:
             self.root.after(0, lambda: self.progress.start(15))
 
             if BACKEND.startswith("Rust"):
-                images = engine.scan_images(folder, recursive=self.recursive_var.get())
+                min_sz = self.min_size_var.get()
+                images = engine.scan_images(
+                    folder,
+                    recursive=self.recursive_var.get(),
+                    min_width=min_sz,
+                    min_height=min_sz,
+                )
             else:
 
                 def scan_progress(done, total, current):

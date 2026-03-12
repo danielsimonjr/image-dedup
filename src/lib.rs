@@ -152,8 +152,13 @@ struct DuplicateGroup {
 /// Scan a folder for images, computing metadata + perceptual hashes.
 /// Uses rayon for parallel I/O and hashing.
 #[pyfunction]
-#[pyo3(signature = (folder, recursive=true))]
-fn scan_images(folder: &str, recursive: bool) -> PyResult<Vec<ImageInfo>> {
+#[pyo3(signature = (folder, recursive=true, min_width=50, min_height=50))]
+fn scan_images(
+    folder: &str,
+    recursive: bool,
+    min_width: u32,
+    min_height: u32,
+) -> PyResult<Vec<ImageInfo>> {
     let folder_path = Path::new(folder);
     if !folder_path.is_dir() {
         return Err(PyValueError::new_err(format!(
@@ -198,6 +203,10 @@ fn scan_images(folder: &str, recursive: bool) -> PyResult<Vec<ImageInfo>> {
         .map(|path| {
             let img = image::open(path).ok()?;
             let (width, height) = img.dimensions();
+            // Skip images below minimum dimensions
+            if width < min_width || height < min_height {
+                return None;
+            }
             let gray = img.to_luma8();
             let phash = compute_phash(&gray);
 
