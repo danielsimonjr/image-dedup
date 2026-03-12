@@ -26,6 +26,10 @@ except ImportError:
 
     BACKEND = "Python (dedup_engine)"
 
+# Checkbox characters
+CHECK_ON = "\u2611"  # ☑
+CHECK_OFF = "\u2610"  # ☐
+
 
 def _delete_files(paths: list[str], send_to_trash: bool = True) -> list[str]:
     """Delete files, using send2trash when available."""
@@ -50,16 +54,17 @@ def _delete_files(paths: list[str], send_to_trash: bool = True) -> list[str]:
 class DedupApp:
     def __init__(self, root: tk.Tk):
         self.root = root
-        self.root.title(f"Image Dedup — pHash + SSIM [{BACKEND}]")
+        self.root.title(f"Image Dedup \u2014 pHash + SSIM [{BACKEND}]")
         self.root.geometry("1100x750")
         self.root.minsize(900, 600)
 
         # State
-        self.groups: list[DuplicateGroup] = []
-        self.images: list[ImageInfo] = []
-        self.preview_refs: list[ImageTk.PhotoImage] = []  # prevent GC
+        self.groups = []
+        self.images = []
+        self.preview_refs = []  # prevent GC
         self.selected_for_deletion: set[str] = set()
         self._scan_thread: threading.Thread | None = None
+        self._pulse_active = False
 
         self._build_ui()
 
@@ -83,6 +88,11 @@ class DedupApp:
 
         self.scan_btn = ttk.Button(ctrl, text="Scan", command=self._start_scan)
         self.scan_btn.pack(side=tk.LEFT, padx=(12, 4))
+
+        self.delete_all_btn = ttk.Button(
+            ctrl, text="Delete All Duplicates", command=self._delete_all_dupes
+        )
+        self.delete_all_btn.pack(side=tk.LEFT, padx=(4, 4))
 
         # Threshold controls
         thresh_frame = ttk.Frame(self.root, padding=(8, 0, 8, 4))
@@ -128,8 +138,8 @@ class DedupApp:
             side=tk.LEFT, padx=(16, 0)
         )
 
-        # Progress bar
-        self.progress = ttk.Progressbar(self.root, mode="determinate")
+        # Progress bar — use determinate mode with manual pulsing for compatibility
+        self.progress = ttk.Progressbar(self.root, mode="determinate", maximum=100)
         self.progress.pack(fill=tk.X, padx=8, pady=(0, 4))
 
         # Main paned window: left = tree, right = preview
@@ -140,23 +150,25 @@ class DedupApp:
         tree_frame = ttk.Frame(paned)
         paned.add(tree_frame, weight=3)
 
-        columns = ("status", "resolution", "size", "ssim", "path")
+        columns = ("selected", "action", "resolution", "size", "ssim", "path")
         self.tree = ttk.Treeview(
             tree_frame, columns=columns, show="tree headings", selectmode="browse"
         )
         self.tree.heading("#0", text="Group")
-        self.tree.heading("status", text="Action")
+        self.tree.heading("selected", text=CHECK_ON)
+        self.tree.heading("action", text="Action")
         self.tree.heading("resolution", text="Resolution")
         self.tree.heading("size", text="File Size")
         self.tree.heading("ssim", text="SSIM")
         self.tree.heading("path", text="Path")
 
         self.tree.column("#0", width=80, minwidth=60)
-        self.tree.column("status", width=70, minwidth=60)
+        self.tree.column("selected", width=40, minwidth=35, anchor="center")
+        self.tree.column("action", width=60, minwidth=50)
         self.tree.column("resolution", width=90, minwidth=70)
         self.tree.column("size", width=80, minwidth=60)
         self.tree.column("ssim", width=60, minwidth=50)
-        self.tree.column("path", width=300, minwidth=100)
+        self.tree.column("path", width=280, minwidth=100)
 
         tree_scroll = ttk.Scrollbar(
             tree_frame, orient=tk.VERTICAL, command=self.tree.yview
@@ -166,12 +178,18 @@ class DedupApp:
         tree_scroll.pack(side=tk.RIGHT, fill=tk.Y)
 
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
+        self.tree.bind("<Button-1>", self._on_click)
 
-        # Right: Preview panel
+        # Right: Preview panel — use tk.Label (not ttk) for reliable image display
         preview_frame = ttk.LabelFrame(paned, text="Preview", padding=4)
         paned.add(preview_frame, weight=2)
 
-        self.preview_label = ttk.Label(preview_frame, text="Select an image to preview")
+        self.preview_label = tk.Label(
+            preview_frame,
+            text="Select an image to preview",
+            bg="#f0f0f0",
+            anchor="center",
+        )
         self.preview_label.pack(fill=tk.BOTH, expand=True)
 
         self.info_label = ttk.Label(preview_frame, text="", wraplength=350)
@@ -181,19 +199,38 @@ class DedupApp:
         action_frame = ttk.Frame(self.root, padding=8)
         action_frame.pack(fill=tk.X)
 
+        ttk.Label(action_frame, text="Filter:").pack(side=tk.LEFT)
+        ttk.Button(
+            action_frame, text="Show All", command=lambda: self._filter_tree("all")
+        ).pack(side=tk.LEFT, padx=(4, 2))
+        ttk.Button(
+            action_frame,
+            text="Show KEEP Only",
+            command=lambda: self._filter_tree("keep"),
+        ).pack(side=tk.LEFT, padx=2)
+        ttk.Button(
+            action_frame,
+            text="Show DELETE Only",
+            command=lambda: self._filter_tree("delete"),
+        ).pack(side=tk.LEFT, padx=2)
+
+        ttk.Separator(action_frame, orient=tk.VERTICAL).pack(
+            side=tk.LEFT, fill=tk.Y, padx=(12, 12)
+        )
+
         self.select_all_btn = ttk.Button(
-            action_frame, text="Select All Duplicates", command=self._select_all_dupes
+            action_frame, text="Check All Duplicates", command=self._select_all_dupes
         )
         self.select_all_btn.pack(side=tk.LEFT)
 
         self.deselect_btn = ttk.Button(
-            action_frame, text="Deselect All", command=self._deselect_all
+            action_frame, text="Uncheck All", command=self._deselect_all
         )
         self.deselect_btn.pack(side=tk.LEFT, padx=(8, 0))
 
         self.delete_btn = ttk.Button(
             action_frame,
-            text="Delete Selected (Trash)",
+            text="Delete Checked (Trash)",
             command=self._delete_selected,
             style="Accent.TButton",
         )
@@ -204,12 +241,34 @@ class DedupApp:
             side=tk.RIGHT, padx=(0, 16)
         )
 
-        # Try to style the delete button red
+        # Style
         style = ttk.Style()
         try:
             style.configure("Accent.TButton", foreground="red")
         except Exception:
             pass
+
+    # ── Progress pulsing (works reliably on all Windows builds) ───────
+
+    def _start_pulse(self):
+        self._pulse_active = True
+        self._pulse_value = 0
+        self._pulse_direction = 3
+        self.progress.configure(value=0, maximum=100)
+        self._do_pulse()
+
+    def _do_pulse(self):
+        if not self._pulse_active:
+            return
+        self._pulse_value += self._pulse_direction
+        if self._pulse_value >= 100 or self._pulse_value <= 0:
+            self._pulse_direction = -self._pulse_direction
+        self.progress.configure(value=self._pulse_value)
+        self.root.after(30, self._do_pulse)
+
+    def _stop_pulse(self):
+        self._pulse_active = False
+        self.progress.configure(value=0)
 
     # ── Actions ──────────────────────────────────────────────────────
 
@@ -244,8 +303,7 @@ class DedupApp:
         try:
             # Phase 1: Scan images
             self.root.after(0, lambda: self.status_var.set("Scanning images..."))
-            self.root.after(0, lambda: self.progress.configure(mode="indeterminate"))
-            self.root.after(0, lambda: self.progress.start(15))
+            self.root.after(0, self._start_pulse)
 
             if BACKEND.startswith("Rust"):
                 min_sz = self.min_size_var.get()
@@ -261,10 +319,7 @@ class DedupApp:
                     pct = int(done / max(total, 1) * 100)
                     name = Path(current).name
                     self.root.after(
-                        0,
-                        lambda: self.progress.configure(
-                            mode="determinate", value=pct, maximum=100
-                        ),
+                        0, lambda: self.progress.configure(value=pct, maximum=100)
                     )
                     self.root.after(
                         0,
@@ -278,14 +333,14 @@ class DedupApp:
                 )
 
             self.images = images
-            self.root.after(0, lambda: self.progress.stop())
 
             n = len(images)
             if n < 2:
+                self.root.after(0, self._stop_pulse)
                 self.root.after(
                     0,
                     lambda: self.status_var.set(
-                        f"Found {n} image(s) — need at least 2 to compare."
+                        f"Found {n} image(s) \u2014 need at least 2 to compare."
                     ),
                 )
                 self.root.after(0, lambda: self.scan_btn.configure(state="normal"))
@@ -298,8 +353,6 @@ class DedupApp:
                     f"Comparing {n} images (pHash + SSIM via {BACKEND})..."
                 ),
             )
-            self.root.after(0, lambda: self.progress.configure(mode="indeterminate"))
-            self.root.after(0, lambda: self.progress.start(15))
 
             if BACKEND.startswith("Rust"):
                 groups = engine.find_duplicates(
@@ -312,10 +365,7 @@ class DedupApp:
                 def match_progress(done, total, info):
                     pct = int(done / max(total, 1) * 100)
                     self.root.after(
-                        0,
-                        lambda: self.progress.configure(
-                            mode="determinate", value=pct, maximum=100
-                        ),
+                        0, lambda: self.progress.configure(value=pct, maximum=100)
                     )
                     self.root.after(
                         0,
@@ -331,19 +381,19 @@ class DedupApp:
                     progress_callback=match_progress,
                 )
 
-            self.root.after(0, lambda: self.progress.stop())
+            self.root.after(0, self._stop_pulse)
             self.groups = groups
 
             # Update UI on main thread
             self.root.after(0, lambda: self._populate_tree(groups))
 
         except Exception as e:
-            self.root.after(0, lambda: self.progress.stop())
+            self.root.after(0, self._stop_pulse)
             self.root.after(0, lambda: messagebox.showerror("Error", str(e)))
         finally:
             self.root.after(0, lambda: self.scan_btn.configure(state="normal"))
 
-    def _populate_tree(self, groups: list[DuplicateGroup]):
+    def _populate_tree(self, groups):
         self.tree.delete(*self.tree.get_children())
         self.selected_for_deletion.clear()
 
@@ -369,30 +419,30 @@ class DedupApp:
                 iid=group_id,
                 text=f"Group {i + 1}",
                 values=(
+                    "",
                     "KEEP",
                     keeper.resolution_label,
                     _fmt_size(keeper.file_size),
-                    "—",
+                    "\u2014",
                     str(keeper.path),
                 ),
                 tags=("keeper",),
             )
 
-            # Child rows = duplicates (auto-selected for deletion)
+            # Child rows = duplicates (auto-checked for deletion)
+            scores_dict = (
+                group.scores if isinstance(group.scores, dict) else dict(group.scores)
+            )
             for j, dupe in enumerate(group.duplicates):
                 child_id = f"group_{i}_dupe_{j}"
-                # Rust returns list of (path, score) tuples; Python returns dict
-                if isinstance(group.scores, dict):
-                    score = group.scores.get(str(dupe.path), 0.0)
-                else:
-                    scores_dict = dict(group.scores)
-                    score = scores_dict.get(str(dupe.path), 0.0)
+                score = scores_dict.get(str(dupe.path), 0.0)
                 self.tree.insert(
                     group_id,
                     tk.END,
                     iid=child_id,
                     text="",
                     values=(
+                        CHECK_ON,
                         "DELETE",
                         dupe.resolution_label,
                         _fmt_size(dupe.file_size),
@@ -406,10 +456,49 @@ class DedupApp:
         # Style tags
         self.tree.tag_configure("keeper", foreground="green")
         self.tree.tag_configure("duplicate", foreground="#cc0000")
+        self.tree.tag_configure("skipped", foreground="gray")
 
         # Expand all groups
         for child in self.tree.get_children():
             self.tree.item(child, open=True)
+
+        self._update_count()
+
+    # ── Click handling: toggle checkbox + show preview ────────────────
+
+    def _on_click(self, event):
+        """Handle click — toggle checkbox if clicking the checkbox column."""
+        region = self.tree.identify_region(event.x, event.y)
+        if region != "cell":
+            return
+
+        col = self.tree.identify_column(event.x)
+        item = self.tree.identify_row(event.y)
+        if not item:
+            return
+
+        # col "#1" = selected column (checkbox)
+        if col == "#1":
+            self._toggle_check(item)
+
+    def _toggle_check(self, item):
+        values = list(self.tree.item(item, "values"))
+        if not values or values[1] == "KEEP":
+            return  # can't toggle keeper
+
+        path = values[5]
+        if values[0] == CHECK_ON:
+            # Uncheck
+            values[0] = CHECK_OFF
+            values[1] = "SKIP"
+            self.tree.item(item, values=values, tags=("skipped",))
+            self.selected_for_deletion.discard(path)
+        else:
+            # Check
+            values[0] = CHECK_ON
+            values[1] = "DELETE"
+            self.tree.item(item, values=values, tags=("duplicate",))
+            self.selected_for_deletion.add(path)
 
         self._update_count()
 
@@ -423,40 +512,146 @@ class DedupApp:
         if not values:
             return
 
-        img_path = values[4]  # path column
+        img_path = values[5]  # path column
         self._show_preview(img_path)
 
-        # Toggle delete status on double-click is handled via binding
-        # Single click just shows preview + info
         info_parts = [
             f"Path: {img_path}",
-            f"Resolution: {values[1]}",
-            f"Size: {values[2]}",
+            f"Resolution: {values[2]}",
+            f"Size: {values[3]}",
         ]
-        if values[3] != "—":
-            info_parts.append(f"SSIM score: {values[3]}")
+        if values[4] != "\u2014":
+            info_parts.append(f"SSIM score: {values[4]}")
         self.info_label.configure(text="\n".join(info_parts))
 
     def _show_preview(self, img_path: str):
         try:
-            img = Image.open(img_path)
-            # Fit within preview area
-            max_w, max_h = 400, 400
-            img.thumbnail((max_w, max_h), Image.LANCZOS)
-            photo = ImageTk.PhotoImage(img)
-            self.preview_refs = [photo]  # keep reference
-            self.preview_label.configure(image=photo, text="")
+            with Image.open(img_path) as img:
+                img.load()
+                # Get preview area size
+                pw = max(self.preview_label.winfo_width(), 200)
+                ph = max(self.preview_label.winfo_height(), 200)
+                img.thumbnail((pw, ph), Image.LANCZOS)
+                photo = ImageTk.PhotoImage(img)
+                self.preview_refs = [photo]  # prevent GC
+                self.preview_label.configure(image=photo, text="")
         except Exception as e:
+            self.preview_refs = []
             self.preview_label.configure(image="", text=f"Cannot load:\n{e}")
+
+    # ── Filter tree view ─────────────────────────────────────────────
+
+    def _filter_tree(self, mode: str):
+        """Show/hide rows based on filter mode: 'all', 'keep', 'delete'."""
+        for group_id in self.tree.get_children():
+            group_has_visible = False
+
+            for child_id in self.tree.get_children(group_id):
+                values = self.tree.item(child_id, "values")
+                action = values[1] if values else ""
+
+                if mode == "all":
+                    # Treeview doesn't support hide/show natively,
+                    # so we reattach detached items. Use detach approach.
+                    pass  # handled below by repopulating
+                elif mode == "delete" and action not in ("DELETE",):
+                    continue
+                elif mode == "keep":
+                    continue
+                group_has_visible = True
+
+        # Simplest reliable approach: repopulate the tree with filter
+        if not self.groups:
+            return
+
+        self.tree.delete(*self.tree.get_children())
+
+        for i, group in enumerate(self.groups):
+            group_id = f"group_{i}"
+            keeper = group.keeper
+            scores_dict = (
+                group.scores if isinstance(group.scores, dict) else dict(group.scores)
+            )
+
+            if mode == "delete":
+                # Only show groups that have checked duplicates
+                checked_dupes = [
+                    d
+                    for d in group.duplicates
+                    if str(d.path) in self.selected_for_deletion
+                ]
+                if not checked_dupes:
+                    continue
+
+            # Insert keeper row (always visible unless delete-only filter)
+            if mode != "delete":
+                self.tree.insert(
+                    "",
+                    tk.END,
+                    iid=group_id,
+                    text=f"Group {i + 1}",
+                    values=(
+                        "",
+                        "KEEP",
+                        keeper.resolution_label,
+                        _fmt_size(keeper.file_size),
+                        "\u2014",
+                        str(keeper.path),
+                    ),
+                    tags=("keeper",),
+                )
+                parent = group_id
+            else:
+                # In delete-only mode, use flat list (no grouping)
+                parent = ""
+
+            for j, dupe in enumerate(group.duplicates):
+                child_id = f"group_{i}_dupe_{j}"
+                path = str(dupe.path)
+                is_checked = path in self.selected_for_deletion
+                score = scores_dict.get(path, 0.0)
+
+                if mode == "keep":
+                    continue  # skip duplicates in keep-only view
+                if mode == "delete" and not is_checked:
+                    continue
+
+                self.tree.insert(
+                    parent,
+                    tk.END,
+                    iid=child_id,
+                    text="" if parent else f"Group {i + 1}",
+                    values=(
+                        CHECK_ON if is_checked else CHECK_OFF,
+                        "DELETE" if is_checked else "SKIP",
+                        dupe.resolution_label,
+                        _fmt_size(dupe.file_size),
+                        f"{score:.3f}",
+                        path,
+                    ),
+                    tags=("duplicate" if is_checked else "skipped",),
+                )
+
+        # Re-apply tag styles and expand
+        self.tree.tag_configure("keeper", foreground="green")
+        self.tree.tag_configure("duplicate", foreground="#cc0000")
+        self.tree.tag_configure("skipped", foreground="gray")
+        for child in self.tree.get_children():
+            self.tree.item(child, open=True)
+
+    # ── Bulk actions ─────────────────────────────────────────────────
 
     def _select_all_dupes(self):
         self.selected_for_deletion.clear()
         for group_id in self.tree.get_children():
             for child_id in self.tree.get_children(group_id):
                 values = list(self.tree.item(child_id, "values"))
-                values[0] = "DELETE"
+                if values[1] == "KEEP":
+                    continue
+                values[0] = CHECK_ON
+                values[1] = "DELETE"
                 self.tree.item(child_id, values=values, tags=("duplicate",))
-                self.selected_for_deletion.add(values[4])
+                self.selected_for_deletion.add(values[5])
         self._update_count()
 
     def _deselect_all(self):
@@ -464,9 +659,11 @@ class DedupApp:
         for group_id in self.tree.get_children():
             for child_id in self.tree.get_children(group_id):
                 values = list(self.tree.item(child_id, "values"))
-                values[0] = "SKIP"
+                if values[1] == "KEEP":
+                    continue
+                values[0] = CHECK_OFF
+                values[1] = "SKIP"
                 self.tree.item(child_id, values=values, tags=("skipped",))
-        self.tree.tag_configure("skipped", foreground="gray")
         self._update_count()
 
     def _update_count(self):
@@ -474,41 +671,78 @@ class DedupApp:
         if n == 0:
             self.count_var.set("")
         else:
-            # Estimate savings
             total = 0
             for g in self.groups:
                 for d in g.duplicates:
                     if str(d.path) in self.selected_for_deletion:
                         total += d.file_size
             mb = total / (1024 * 1024)
-            self.count_var.set(f"{n} file(s) selected ({mb:.1f} MB)")
+            self.count_var.set(f"{n} file(s) checked ({mb:.1f} MB)")
 
     def _delete_selected(self):
         if not self.selected_for_deletion:
-            messagebox.showinfo(
-                "Nothing Selected", "No files are selected for deletion."
-            )
+            messagebox.showinfo("Nothing Checked", "No files are checked for deletion.")
             return
 
         n = len(self.selected_for_deletion)
         if not messagebox.askyesno(
             "Confirm Deletion",
             f"Send {n} file(s) to the Recycle Bin?\n\n"
-            "This uses send2trash when available (recoverable from Recycle Bin).",
+            "Files are recoverable from the Recycle Bin.",
         ):
             return
 
-        # Collect paths to delete
         paths_to_delete = list(self.selected_for_deletion)
         deleted = _delete_files(paths_to_delete, send_to_trash=True)
 
         messagebox.showinfo(
             "Done",
-            f"Deleted {len(deleted)} file(s).\n\n"
-            "Files were sent to the Recycle Bin (if send2trash is installed).",
+            f"Deleted {len(deleted)} file(s) to Recycle Bin.",
         )
 
-        # Remove deleted items from tree
+        self.selected_for_deletion -= set(deleted)
+        self._refresh_tree_after_delete(deleted)
+
+    def _delete_all_dupes(self):
+        """Quick delete all duplicates without needing to scan the tree."""
+        if not self.groups:
+            messagebox.showinfo("No Results", "Run a scan first.")
+            return
+
+        # Gather all duplicate paths
+        all_dupe_paths = set()
+        for g in self.groups:
+            for d in g.duplicates:
+                all_dupe_paths.add(str(d.path))
+
+        if not all_dupe_paths:
+            messagebox.showinfo("Nothing to Delete", "No duplicates found.")
+            return
+
+        total_bytes = sum(
+            d.file_size
+            for g in self.groups
+            for d in g.duplicates
+            if str(d.path) in all_dupe_paths
+        )
+        mb = total_bytes / (1024 * 1024)
+
+        if not messagebox.askyesno(
+            "Delete ALL Duplicates",
+            f"Send ALL {len(all_dupe_paths)} duplicate file(s) to the Recycle Bin?\n"
+            f"This will free ~{mb:.1f} MB.\n\n"
+            "The highest-resolution version of each group will be kept.\n"
+            "Files are recoverable from the Recycle Bin.",
+        ):
+            return
+
+        deleted = _delete_files(list(all_dupe_paths), send_to_trash=True)
+
+        messagebox.showinfo(
+            "Done",
+            f"Deleted {len(deleted)} file(s) to Recycle Bin.",
+        )
+
         self.selected_for_deletion -= set(deleted)
         self._refresh_tree_after_delete(deleted)
 
@@ -517,7 +751,7 @@ class DedupApp:
         for group_id in list(self.tree.get_children()):
             for child_id in list(self.tree.get_children(group_id)):
                 values = self.tree.item(child_id, "values")
-                if values[4] in deleted_set:
+                if values and values[5] in deleted_set:
                     self.tree.delete(child_id)
             # Remove empty groups
             if not self.tree.get_children(group_id):
