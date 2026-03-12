@@ -1,0 +1,11 @@
+# Required for GUI
+Pillow>=10.0
+send2trash>=1.8
+
+# Only needed if using Python fallback engine (no Rust build)
+imagehash>=4.3
+scikit-image>=0.21
+numpy>=1.24
+
+# For building Rust extension
+maturin>=1.0

@@ -1,0 +1,31 @@
+[build-system]
+requires = ["maturin>=1.12,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "image-dedup"
+version = "0.1.0"
+description = "Duplicate image finder using perceptual hashing (Rust) + SSIM verification with Tkinter GUI"
+requires-python = ">=3.10"
+dependencies = [
+    "Pillow>=10.0",
+    "send2trash>=1.8",
+]
+classifiers = [
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+]
+
+[project.optional-dependencies]
+fallback = [
+    "imagehash>=4.3",
+    "scikit-image>=0.21",
+    "numpy>=1.24",
+]
+
+[project.scripts]
+image-dedup = "dedup_gui:main"
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
+module-name = "dedup_core"
