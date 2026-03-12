@@ -7,6 +7,7 @@ Keeps the highest-resolution version of each duplicate group.
 """
 
 import os
+import re
 import sys
 import threading
 import tkinter as tk
@@ -29,6 +30,8 @@ except ImportError:
 # Checkbox characters
 CHECK_ON = "\u2611"  # ☑
 CHECK_OFF = "\u2610"  # ☐
+SORT_ASC = " \u25b2"  # ▲
+SORT_DESC = " \u25bc"  # ▼
 
 
 def _delete_files(paths: list[str], send_to_trash: bool = True) -> list[str]:
@@ -51,6 +54,31 @@ def _delete_files(paths: list[str], send_to_trash: bool = True) -> list[str]:
     return deleted
 
 
+def _parse_size(s: str) -> float:
+    """Parse '1.5 MB' / '300.0 KB' / '42 B' back to bytes for sorting."""
+    m = re.match(r"([\d.]+)\s*(B|KB|MB)", s)
+    if not m:
+        return 0.0
+    val = float(m.group(1))
+    unit = m.group(2)
+    if unit == "KB":
+        val *= 1024
+    elif unit == "MB":
+        val *= 1024 * 1024
+    return val
+
+
+def _parse_resolution(s: str) -> int:
+    """Parse '1920x1080' to pixel count for sorting."""
+    parts = s.split("x")
+    if len(parts) == 2:
+        try:
+            return int(parts[0]) * int(parts[1])
+        except ValueError:
+            pass
+    return 0
+
+
 class DedupApp:
     def __init__(self, root: tk.Tk):
         self.root = root
@@ -61,10 +89,12 @@ class DedupApp:
         # State
         self.groups = []
         self.images = []
-        self.preview_refs = []  # prevent GC
+        self._preview_photo = None  # prevent GC — single strong ref
+        self._preview_pil = None  # keep PIL image alive too
         self.selected_for_deletion: set[str] = set()
         self._scan_thread: threading.Thread | None = None
         self._pulse_active = False
+        self._sort_state: dict[str, bool] = {}  # col_id -> ascending
 
         self._build_ui()
 
@@ -138,7 +168,7 @@ class DedupApp:
             side=tk.LEFT, padx=(16, 0)
         )
 
-        # Progress bar — use determinate mode with manual pulsing for compatibility
+        # Progress bar
         self.progress = ttk.Progressbar(self.root, mode="determinate", maximum=100)
         self.progress.pack(fill=tk.X, padx=8, pady=(0, 4))
 
@@ -154,13 +184,21 @@ class DedupApp:
         self.tree = ttk.Treeview(
             tree_frame, columns=columns, show="tree headings", selectmode="browse"
         )
-        self.tree.heading("#0", text="Group")
-        self.tree.heading("selected", text=CHECK_ON)
-        self.tree.heading("action", text="Action")
-        self.tree.heading("resolution", text="Resolution")
-        self.tree.heading("size", text="File Size")
-        self.tree.heading("ssim", text="SSIM")
-        self.tree.heading("path", text="Path")
+
+        # Column headings — checkbox header toggles all, others sort
+        self.tree.heading("#0", text="Group", command=lambda: self._sort_by("#0"))
+        self.tree.heading("selected", text=CHECK_ON, command=self._toggle_all_checks)
+        self.tree.heading(
+            "action", text="Action", command=lambda: self._sort_by("action")
+        )
+        self.tree.heading(
+            "resolution", text="Resolution", command=lambda: self._sort_by("resolution")
+        )
+        self.tree.heading(
+            "size", text="File Size", command=lambda: self._sort_by("size")
+        )
+        self.tree.heading("ssim", text="SSIM", command=lambda: self._sort_by("ssim"))
+        self.tree.heading("path", text="Path", command=lambda: self._sort_by("path"))
 
         self.tree.column("#0", width=80, minwidth=60)
         self.tree.column("selected", width=40, minwidth=35, anchor="center")
@@ -180,17 +218,19 @@ class DedupApp:
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
         self.tree.bind("<Button-1>", self._on_click)
 
-        # Right: Preview panel — use tk.Label (not ttk) for reliable image display
+        # Right: Preview panel — use tk.Canvas for reliable image rendering
         preview_frame = ttk.LabelFrame(paned, text="Preview", padding=4)
         paned.add(preview_frame, weight=2)
 
-        self.preview_label = tk.Label(
-            preview_frame,
-            text="Select an image to preview",
-            bg="#f0f0f0",
-            anchor="center",
+        self.preview_canvas = tk.Canvas(
+            preview_frame, bg="#f0f0f0", highlightthickness=0
         )
-        self.preview_label.pack(fill=tk.BOTH, expand=True)
+        self.preview_canvas.pack(fill=tk.BOTH, expand=True)
+        self.preview_canvas.bind("<Configure>", self._on_preview_resize)
+        self._preview_text_id = self.preview_canvas.create_text(
+            0, 0, text="Select an image to preview", anchor="center", fill="#666"
+        )
+        self._preview_image_id = self.preview_canvas.create_image(0, 0, anchor="center")
 
         self.info_label = ttk.Label(preview_frame, text="", wraplength=350)
         self.info_label.pack(fill=tk.X, pady=(4, 0))
@@ -248,7 +288,7 @@ class DedupApp:
         except Exception:
             pass
 
-    # ── Progress pulsing (works reliably on all Windows builds) ───────
+    # ── Progress pulsing ─────────────────────────────────────────────
 
     def _start_pulse(self):
         self._pulse_active = True
@@ -301,7 +341,6 @@ class DedupApp:
     def _scan_worker(self, folder: str):
         """Runs in background thread."""
         try:
-            # Phase 1: Scan images
             self.root.after(0, lambda: self.status_var.set("Scanning images..."))
             self.root.after(0, self._start_pulse)
 
@@ -346,7 +385,6 @@ class DedupApp:
                 self.root.after(0, lambda: self.scan_btn.configure(state="normal"))
                 return
 
-            # Phase 2: Find duplicates
             self.root.after(
                 0,
                 lambda: self.status_var.set(
@@ -383,8 +421,6 @@ class DedupApp:
 
             self.root.after(0, self._stop_pulse)
             self.groups = groups
-
-            # Update UI on main thread
             self.root.after(0, lambda: self._populate_tree(groups))
 
         except Exception as e:
@@ -411,7 +447,6 @@ class DedupApp:
         for i, group in enumerate(groups):
             group_id = f"group_{i}"
 
-            # Parent row = keeper
             keeper = group.keeper
             self.tree.insert(
                 "",
@@ -429,7 +464,6 @@ class DedupApp:
                 tags=("keeper",),
             )
 
-            # Child rows = duplicates (auto-checked for deletion)
             scores_dict = (
                 group.scores if isinstance(group.scores, dict) else dict(group.scores)
             )
@@ -453,21 +487,58 @@ class DedupApp:
                 )
                 self.selected_for_deletion.add(str(dupe.path))
 
-        # Style tags
         self.tree.tag_configure("keeper", foreground="green")
         self.tree.tag_configure("duplicate", foreground="#cc0000")
         self.tree.tag_configure("skipped", foreground="gray")
 
-        # Expand all groups
         for child in self.tree.get_children():
             self.tree.item(child, open=True)
 
         self._update_count()
 
-    # ── Click handling: toggle checkbox + show preview ────────────────
+    # ── Preview (Canvas-based, reliable on all Windows builds) ───────
+
+    def _on_preview_resize(self, event):
+        cx = event.width // 2
+        cy = event.height // 2
+        self.preview_canvas.coords(self._preview_text_id, cx, cy)
+        self.preview_canvas.coords(self._preview_image_id, cx, cy)
+
+    def _show_preview(self, img_path: str):
+        try:
+            # Open image — do NOT use context manager, keep PIL image alive
+            pil_img = Image.open(img_path)
+            pil_img.load()
+
+            # Fit to canvas size
+            cw = max(self.preview_canvas.winfo_width(), 200)
+            ch = max(self.preview_canvas.winfo_height(), 200)
+            pil_img.thumbnail((cw, ch), Image.LANCZOS)
+
+            photo = ImageTk.PhotoImage(pil_img)
+
+            # Store strong references to prevent garbage collection
+            self._preview_pil = pil_img
+            self._preview_photo = photo
+
+            # Update canvas
+            cx = cw // 2
+            cy = ch // 2
+            self.preview_canvas.itemconfigure(self._preview_image_id, image=photo)
+            self.preview_canvas.coords(self._preview_image_id, cx, cy)
+            self.preview_canvas.itemconfigure(self._preview_text_id, text="")
+        except Exception as e:
+            self._preview_photo = None
+            self._preview_pil = None
+            self.preview_canvas.itemconfigure(self._preview_image_id, image="")
+            self.preview_canvas.itemconfigure(
+                self._preview_text_id, text=f"Cannot load:\n{e}"
+            )
+
+    # ── Click handling ───────────────────────────────────────────────
 
     def _on_click(self, event):
-        """Handle click — toggle checkbox if clicking the checkbox column."""
+        """Toggle checkbox if clicking the checkbox column."""
         region = self.tree.identify_region(event.x, event.y)
         if region != "cell":
             return
@@ -477,30 +548,34 @@ class DedupApp:
         if not item:
             return
 
-        # col "#1" = selected column (checkbox)
-        if col == "#1":
+        if col == "#1":  # selected column
             self._toggle_check(item)
 
     def _toggle_check(self, item):
         values = list(self.tree.item(item, "values"))
         if not values or values[1] == "KEEP":
-            return  # can't toggle keeper
+            return
 
         path = values[5]
         if values[0] == CHECK_ON:
-            # Uncheck
             values[0] = CHECK_OFF
             values[1] = "SKIP"
             self.tree.item(item, values=values, tags=("skipped",))
             self.selected_for_deletion.discard(path)
         else:
-            # Check
             values[0] = CHECK_ON
             values[1] = "DELETE"
             self.tree.item(item, values=values, tags=("duplicate",))
             self.selected_for_deletion.add(path)
 
         self._update_count()
+
+    def _toggle_all_checks(self):
+        """Toggle all checkboxes — if any are checked, uncheck all; otherwise check all."""
+        if self.selected_for_deletion:
+            self._deselect_all()
+        else:
+            self._select_all_dupes()
 
     def _on_select(self, event):
         sel = self.tree.selection()
@@ -512,7 +587,7 @@ class DedupApp:
         if not values:
             return
 
-        img_path = values[5]  # path column
+        img_path = values[5]
         self._show_preview(img_path)
 
         info_parts = [
@@ -524,43 +599,136 @@ class DedupApp:
             info_parts.append(f"SSIM score: {values[4]}")
         self.info_label.configure(text="\n".join(info_parts))
 
-    def _show_preview(self, img_path: str):
-        try:
-            with Image.open(img_path) as img:
-                img.load()
-                # Get preview area size
-                pw = max(self.preview_label.winfo_width(), 200)
-                ph = max(self.preview_label.winfo_height(), 200)
-                img.thumbnail((pw, ph), Image.LANCZOS)
-                photo = ImageTk.PhotoImage(img)
-                self.preview_refs = [photo]  # prevent GC
-                self.preview_label.configure(image=photo, text="")
-        except Exception as e:
-            self.preview_refs = []
-            self.preview_label.configure(image="", text=f"Cannot load:\n{e}")
+    # ── Column sorting ───────────────────────────────────────────────
+
+    def _sort_by(self, col_id: str):
+        """Sort all rows by the given column. Toggles asc/desc on repeat click."""
+        ascending = not self._sort_state.get(col_id, False)
+        self._sort_state[col_id] = ascending
+
+        # Collect all top-level items with their children
+        all_groups = []
+        for group_id in self.tree.get_children():
+            group_text = self.tree.item(group_id, "text")
+            group_values = self.tree.item(group_id, "values")
+            group_tags = self.tree.item(group_id, "tags")
+            children = []
+            for child_id in self.tree.get_children(group_id):
+                children.append(
+                    {
+                        "iid": child_id,
+                        "text": self.tree.item(child_id, "text"),
+                        "values": self.tree.item(child_id, "values"),
+                        "tags": self.tree.item(child_id, "tags"),
+                    }
+                )
+            all_groups.append(
+                {
+                    "iid": group_id,
+                    "text": group_text,
+                    "values": group_values,
+                    "tags": group_tags,
+                    "children": children,
+                }
+            )
+
+        # Sort key based on column
+        def sort_key(group):
+            # Use keeper values for group-level sort
+            vals = group["values"]
+            if col_id == "#0":
+                # Sort by group number
+                m = re.search(r"(\d+)", group["text"])
+                return int(m.group(1)) if m else 0
+            elif col_id == "action":
+                return vals[1] if vals else ""
+            elif col_id == "resolution":
+                return _parse_resolution(vals[2]) if vals else 0
+            elif col_id == "size":
+                return _parse_size(vals[3]) if vals else 0
+            elif col_id == "ssim":
+                # For groups, use the max SSIM from children
+                scores = []
+                for c in group["children"]:
+                    try:
+                        scores.append(float(c["values"][4]))
+                    except (ValueError, IndexError):
+                        pass
+                return max(scores) if scores else 0
+            elif col_id == "path":
+                return vals[5] if vals else ""
+            return ""
+
+        all_groups.sort(key=sort_key, reverse=not ascending)
+
+        # Also sort children within each group
+        def child_sort_key(child):
+            vals = child["values"]
+            if col_id == "resolution":
+                return _parse_resolution(vals[2]) if vals else 0
+            elif col_id == "size":
+                return _parse_size(vals[3]) if vals else 0
+            elif col_id == "ssim":
+                try:
+                    return float(vals[4])
+                except (ValueError, IndexError):
+                    return 0
+            elif col_id == "path":
+                return vals[5] if vals else ""
+            elif col_id == "action":
+                return vals[1] if vals else ""
+            return ""
+
+        for group in all_groups:
+            group["children"].sort(key=child_sort_key, reverse=not ascending)
+
+        # Rebuild tree
+        self.tree.delete(*self.tree.get_children())
+        for group in all_groups:
+            self.tree.insert(
+                "",
+                tk.END,
+                iid=group["iid"],
+                text=group["text"],
+                values=group["values"],
+                tags=group["tags"],
+                open=True,
+            )
+            for child in group["children"]:
+                self.tree.insert(
+                    group["iid"],
+                    tk.END,
+                    iid=child["iid"],
+                    text=child["text"],
+                    values=child["values"],
+                    tags=child["tags"],
+                )
+
+        # Re-apply tag styles
+        self.tree.tag_configure("keeper", foreground="green")
+        self.tree.tag_configure("duplicate", foreground="#cc0000")
+        self.tree.tag_configure("skipped", foreground="gray")
+
+        # Update heading to show sort indicator
+        col_labels = {
+            "#0": "Group",
+            "action": "Action",
+            "resolution": "Resolution",
+            "size": "File Size",
+            "ssim": "SSIM",
+            "path": "Path",
+        }
+        # Reset all headings
+        for cid, label in col_labels.items():
+            self.tree.heading(cid, text=label)
+        # Mark sorted column
+        if col_id in col_labels:
+            arrow = SORT_ASC if ascending else SORT_DESC
+            self.tree.heading(col_id, text=col_labels[col_id] + arrow)
 
     # ── Filter tree view ─────────────────────────────────────────────
 
     def _filter_tree(self, mode: str):
-        """Show/hide rows based on filter mode: 'all', 'keep', 'delete'."""
-        for group_id in self.tree.get_children():
-            group_has_visible = False
-
-            for child_id in self.tree.get_children(group_id):
-                values = self.tree.item(child_id, "values")
-                action = values[1] if values else ""
-
-                if mode == "all":
-                    # Treeview doesn't support hide/show natively,
-                    # so we reattach detached items. Use detach approach.
-                    pass  # handled below by repopulating
-                elif mode == "delete" and action not in ("DELETE",):
-                    continue
-                elif mode == "keep":
-                    continue
-                group_has_visible = True
-
-        # Simplest reliable approach: repopulate the tree with filter
         if not self.groups:
             return
 
@@ -574,7 +742,6 @@ class DedupApp:
             )
 
             if mode == "delete":
-                # Only show groups that have checked duplicates
                 checked_dupes = [
                     d
                     for d in group.duplicates
@@ -583,7 +750,6 @@ class DedupApp:
                 if not checked_dupes:
                     continue
 
-            # Insert keeper row (always visible unless delete-only filter)
             if mode != "delete":
                 self.tree.insert(
                     "",
@@ -602,7 +768,6 @@ class DedupApp:
                 )
                 parent = group_id
             else:
-                # In delete-only mode, use flat list (no grouping)
                 parent = ""
 
             for j, dupe in enumerate(group.duplicates):
@@ -612,7 +777,7 @@ class DedupApp:
                 score = scores_dict.get(path, 0.0)
 
                 if mode == "keep":
-                    continue  # skip duplicates in keep-only view
+                    continue
                 if mode == "delete" and not is_checked:
                     continue
 
@@ -632,7 +797,6 @@ class DedupApp:
                     tags=("duplicate" if is_checked else "skipped",),
                 )
 
-        # Re-apply tag styles and expand
         self.tree.tag_configure("keeper", foreground="green")
         self.tree.tag_configure("duplicate", foreground="#cc0000")
         self.tree.tag_configure("skipped", foreground="gray")
@@ -704,12 +868,10 @@ class DedupApp:
         self._refresh_tree_after_delete(deleted)
 
     def _delete_all_dupes(self):
-        """Quick delete all duplicates without needing to scan the tree."""
         if not self.groups:
             messagebox.showinfo("No Results", "Run a scan first.")
             return
 
-        # Gather all duplicate paths
         all_dupe_paths = set()
         for g in self.groups:
             for d in g.duplicates:
@@ -753,7 +915,6 @@ class DedupApp:
                 values = self.tree.item(child_id, "values")
                 if values and values[5] in deleted_set:
                     self.tree.delete(child_id)
-            # Remove empty groups
             if not self.tree.get_children(group_id):
                 self.tree.delete(group_id)
         self._update_count()
