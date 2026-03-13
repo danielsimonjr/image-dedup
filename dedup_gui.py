@@ -173,7 +173,14 @@ class DedupApp:
         self.progress.pack(fill=tk.X, padx=8, pady=(0, 4))
 
         # Main paned window: left = tree, right = preview
-        paned = ttk.PanedWindow(self.root, orient=tk.HORIZONTAL)
+        # Use tk.PanedWindow (not ttk) for a visible, draggable sash
+        paned = tk.PanedWindow(
+            self.root,
+            orient=tk.HORIZONTAL,
+            sashwidth=6,
+            sashrelief=tk.RAISED,
+            bg="#cccccc",
+        )
         paned.pack(fill=tk.BOTH, expand=True, padx=8, pady=4)
 
         # Left: Treeview with duplicate groups
@@ -218,22 +225,35 @@ class DedupApp:
         self.tree.bind("<<TreeviewSelect>>", self._on_select)
         self.tree.bind("<Button-1>", self._on_click)
 
-        # Right: Preview panel — use tk.Canvas for reliable image rendering
-        preview_frame = ttk.LabelFrame(paned, text="Preview", padding=4)
+        # Right: Preview panel — destroy/recreate label for bulletproof image display
+        preview_frame = tk.Frame(paned, bd=2, relief=tk.GROOVE)
         paned.add(preview_frame, weight=2)
 
-        self.preview_canvas = tk.Canvas(
-            preview_frame, bg="#f0f0f0", highlightthickness=0
+        tk.Label(preview_frame, text="Preview", bg="#e0e0e0", anchor="w", padx=4).pack(
+            fill=tk.X
         )
-        self.preview_canvas.pack(fill=tk.BOTH, expand=True)
-        self.preview_canvas.bind("<Configure>", self._on_preview_resize)
-        self._preview_text_id = self.preview_canvas.create_text(
-            0, 0, text="Select an image to preview", anchor="center", fill="#666"
-        )
-        self._preview_image_id = self.preview_canvas.create_image(0, 0, anchor="center")
 
-        self.info_label = ttk.Label(preview_frame, text="", wraplength=350)
-        self.info_label.pack(fill=tk.X, pady=(4, 0))
+        self.preview_container = tk.Frame(preview_frame, bg="#f0f0f0")
+        self.preview_container.pack(fill=tk.BOTH, expand=True)
+
+        self._preview_widget = tk.Label(
+            self.preview_container,
+            text="Select an image to preview",
+            bg="#f0f0f0",
+            fg="#666",
+        )
+        self._preview_widget.pack(expand=True)
+
+        self.info_label = tk.Label(
+            preview_frame,
+            text="",
+            wraplength=350,
+            justify=tk.LEFT,
+            anchor="w",
+            padx=4,
+            bg="#f8f8f8",
+        )
+        self.info_label.pack(fill=tk.X, pady=(2, 0))
 
         # Bottom action bar
         action_frame = ttk.Frame(self.root, padding=8)
@@ -496,44 +516,42 @@ class DedupApp:
 
         self._update_count()
 
-    # ── Preview (Canvas-based, reliable on all Windows builds) ───────
-
-    def _on_preview_resize(self, event):
-        cx = event.width // 2
-        cy = event.height // 2
-        self.preview_canvas.coords(self._preview_text_id, cx, cy)
-        self.preview_canvas.coords(self._preview_image_id, cx, cy)
+    # ── Preview (destroy/recreate label — works on all Windows builds) ─
 
     def _show_preview(self, img_path: str):
+        # Destroy old preview widget entirely
+        self._preview_widget.destroy()
+
         try:
-            # Open image — do NOT use context manager, keep PIL image alive
             pil_img = Image.open(img_path)
             pil_img.load()
 
-            # Fit to canvas size
-            cw = max(self.preview_canvas.winfo_width(), 200)
-            ch = max(self.preview_canvas.winfo_height(), 200)
-            pil_img.thumbnail((cw, ch), Image.LANCZOS)
+            # Fit to container size
+            self.preview_container.update_idletasks()
+            cw = max(self.preview_container.winfo_width(), 200)
+            ch = max(self.preview_container.winfo_height(), 200)
+            pil_img.thumbnail((cw - 10, ch - 10), Image.LANCZOS)
 
             photo = ImageTk.PhotoImage(pil_img)
 
-            # Store strong references to prevent garbage collection
+            # Create a fresh label with the image
+            self._preview_widget = tk.Label(
+                self.preview_container, image=photo, bg="#f0f0f0"
+            )
+            # Store reference on widget AND on self to prevent GC
+            self._preview_widget.image = photo
             self._preview_pil = pil_img
             self._preview_photo = photo
+            self._preview_widget.pack(expand=True)
 
-            # Update canvas
-            cx = cw // 2
-            cy = ch // 2
-            self.preview_canvas.itemconfigure(self._preview_image_id, image=photo)
-            self.preview_canvas.coords(self._preview_image_id, cx, cy)
-            self.preview_canvas.itemconfigure(self._preview_text_id, text="")
         except Exception as e:
-            self._preview_photo = None
-            self._preview_pil = None
-            self.preview_canvas.itemconfigure(self._preview_image_id, image="")
-            self.preview_canvas.itemconfigure(
-                self._preview_text_id, text=f"Cannot load:\n{e}"
+            self._preview_widget = tk.Label(
+                self.preview_container,
+                text=f"Cannot load:\n{e}",
+                bg="#f0f0f0",
+                fg="red",
             )
+            self._preview_widget.pack(expand=True)
 
     # ── Click handling ───────────────────────────────────────────────
 
@@ -548,7 +566,9 @@ class DedupApp:
         if not item:
             return
 
-        if col == "#1":  # selected column
+        if col == "#1":  # selected column (checkbox)
+            self._toggle_check(item)
+        elif col == "#2":  # action column — also toggles
             self._toggle_check(item)
 
     def _toggle_check(self, item):
