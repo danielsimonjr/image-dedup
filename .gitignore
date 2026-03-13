@@ -1,78 +1,40 @@
+# Rust / Tauri
+/src-tauri/target
 /target
-/build
-/dist
-*.pyd
-*.dll
-*.spec
 Cargo.lock
 
-# Byte-compiled / optimized / DLL files
+# Build outputs
+/build
+/dist
+
+# Node
+node_modules/
+package-lock.json
+
+# Python (legacy)
 __pycache__/
 .pytest_cache/
 *.py[cod]
-
-# C extensions
+*.pyd
+*.dll
 *.so
-
-# Distribution / packaging
+*.spec
 .Python
 .venv/
 env/
-bin/
-build/
-develop-eggs/
-dist/
-eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-include/
-man/
 venv/
 *.egg-info/
-.installed.cfg
 *.egg
 
-# Installer logs
-pip-log.txt
-pip-delete-this-directory.txt
-pip-selfcheck.json
-
-# Unit test / coverage reports
-htmlcov/
-.tox/
-.coverage
-.cache
-nosetests.xml
-coverage.xml
-
-# Translations
-*.mo
-
-# Mr Developer
-.mr.developer.cfg
-.project
-.pydevproject
-
-# Rope
-.ropeproject
-
-# Django stuff:
-*.log
-*.pot
-
+# OS
 .DS_Store
 
-# Sphinx documentation
-docs/_build/
-
-# PyCharm
+# IDE
 .idea/
-
-# VSCode
 .vscode/
 
-# Pyenv
-.python-version
+# Generated
+app-icon.png
+
+# Test data
+test_images/

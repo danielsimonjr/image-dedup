@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Image Dedup</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <!-- Toolbar -->
+  <div id="toolbar">
+    <button id="btn-browse" title="Select folder to scan">📁 Browse</button>
+    <input id="folder-path" type="text" placeholder="Select a folder to scan..." readonly />
+    <label><input type="checkbox" id="chk-recursive" checked /> Recursive</label>
+    <label>Min size: <input type="number" id="min-width" value="50" min="1" max="1000" style="width:50px" />×<input type="number" id="min-height" value="50" min="1" max="1000" style="width:50px" /></label>
+    <button id="btn-scan" disabled>🔍 Scan</button>
+    <button id="btn-delete-all" disabled title="Delete all marked duplicates">🗑️ Delete All Duplicates</button>
+    <div id="spacer"></div>
+    <div id="filter-buttons">
+      <button class="filter-btn active" data-filter="all">All</button>
+      <button class="filter-btn" data-filter="keep">Keep</button>
+      <button class="filter-btn" data-filter="delete">Delete</button>
+    </div>
+    <div id="toolbar-zoom">
+      <button id="toolbar-zoom-out" title="Zoom out preview">−</button>
+      <span id="toolbar-zoom-level">Fit</span>
+      <button id="toolbar-zoom-in" title="Zoom in preview">+</button>
+    </div>
+  </div>
+
+  <!-- Progress bar -->
+  <div id="progress-container" class="hidden">
+    <div id="progress-bar"></div>
+    <span id="progress-text">Scanning...</span>
+  </div>
+
+  <!-- Main content: table + preview -->
+  <div id="main">
+    <!-- Results table -->
+    <div id="table-container">
+      <table id="results-table">
+        <thead>
+          <tr>
+            <th data-col="selected" class="col-check"><input type="checkbox" id="select-all" title="Toggle all" /></th>
+            <th data-col="group" class="sortable col-group">Group</th>
+            <th data-col="action" class="sortable col-action">Action</th>
+            <th data-col="resolution" class="sortable col-res">Resolution</th>
+            <th data-col="size" class="sortable col-size">File Size</th>
+            <th data-col="ssim" class="sortable col-ssim">SSIM</th>
+            <th data-col="path" class="sortable col-path">Path</th>
+          </tr>
+        </thead>
+        <tbody id="results-body"></tbody>
+      </table>
+      <div id="empty-state">
+        <p>Select a folder and click <strong>Scan</strong> to find duplicate images.</p>
+        <p class="subtle">Uses perceptual hashing (pHash) + SSIM verification for accurate detection.</p>
+      </div>
+    </div>
+
+    <!-- Preview panel -->
+    <div id="resizer"></div>
+    <div id="preview-panel">
+      <div id="preview-header">
+        <span>Preview</span>
+        <div id="zoom-controls">
+          <button id="zoom-out" title="Zoom out">−</button>
+          <span id="zoom-level">Fit</span>
+          <button id="zoom-in" title="Zoom in">+</button>
+          <button id="zoom-fit" title="Fit to panel">⊡</button>
+        </div>
+      </div>
+      <div id="preview-content">
+        <p class="subtle">Select an image to preview</p>
+      </div>
+      <div id="preview-info"></div>
+    </div>
+  </div>
+
+  <!-- Status bar -->
+  <div id="status-bar">
+    <span id="status-text">Ready</span>
+    <span id="status-stats"></span>
+  </div>
+
+  <script src="main.js"></script>
+</body>
+</html>
