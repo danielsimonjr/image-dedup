@@ -185,7 +185,7 @@ class DedupApp:
 
         # Left: Treeview with duplicate groups
         tree_frame = ttk.Frame(paned)
-        paned.add(tree_frame, weight=3)
+        paned.add(tree_frame, stretch="always")
 
         columns = ("selected", "action", "resolution", "size", "ssim", "path")
         self.tree = ttk.Treeview(
@@ -227,7 +227,7 @@ class DedupApp:
 
         # Right: Preview panel — destroy/recreate label for bulletproof image display
         preview_frame = tk.Frame(paned, bd=2, relief=tk.GROOVE)
-        paned.add(preview_frame, weight=2)
+        paned.add(preview_frame, stretch="always")
 
         tk.Label(preview_frame, text="Preview", bg="#e0e0e0", anchor="w", padx=4).pack(
             fill=tk.X

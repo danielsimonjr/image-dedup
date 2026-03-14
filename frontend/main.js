@@ -342,7 +342,6 @@ async function showPreview(path, row) {
     const filename = path.split("\\").pop() || path.split("/").pop();
     previewInfo.textContent = `${row.width}\u00D7${row.height} \u00B7 ${formatSize(row.fileSize)} \u00B7 ${filename}`;
     document.getElementById("zoom-level").textContent = "Fit";
-    document.getElementById("toolbar-zoom-level").textContent = "Fit";
   } catch (e) {
     previewContent.textContent = "";
     const errMsg = document.createElement("p");
@@ -468,7 +467,6 @@ function applyZoom() {
   if (!img) return;
 
   const zoomLevelLabel = document.getElementById("zoom-level");
-  const toolbarZoomLabel = document.getElementById("toolbar-zoom-level");
 
   if (zoomLevel === ZOOM_FIT) {
     img.style.maxWidth = "100%";
@@ -477,7 +475,6 @@ function applyZoom() {
     img.style.height = "";
     previewContent.classList.remove("zoomed");
     zoomLevelLabel.textContent = "Fit";
-    toolbarZoomLabel.textContent = "Fit";
   } else {
     const pct = Math.round(zoomLevel * 100);
     img.style.maxWidth = "none";
@@ -486,7 +483,6 @@ function applyZoom() {
     img.style.height = "auto";
     previewContent.classList.add("zoomed");
     zoomLevelLabel.textContent = pct + "%";
-    toolbarZoomLabel.textContent = pct + "%";
   }
 }
 
@@ -520,17 +516,18 @@ document.getElementById("zoom-in").addEventListener("click", zoomIn);
 document.getElementById("zoom-out").addEventListener("click", zoomOut);
 document.getElementById("zoom-fit").addEventListener("click", zoomFit);
 
-// Toolbar zoom controls
-document.getElementById("toolbar-zoom-in").addEventListener("click", zoomIn);
-document.getElementById("toolbar-zoom-out").addEventListener("click", zoomOut);
 
-// Ctrl+Wheel zoom
+// Block browser-level Ctrl+Wheel zoom globally (WebView2 page zoom)
+document.addEventListener("wheel", (e) => {
+  if (e.ctrlKey) e.preventDefault();
+}, { passive: false });
+
+// Ctrl+Wheel zoom on preview image
 previewContent.addEventListener("wheel", (e) => {
   if (!e.ctrlKey) return;
-  e.preventDefault();
   if (e.deltaY < 0) zoomIn();
   else zoomOut();
-}, { passive: false });
+});
 
 // ── Helpers ─────────────────────────────────────────────────────────────
 
