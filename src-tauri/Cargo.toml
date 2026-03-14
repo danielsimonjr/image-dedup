@@ -27,5 +27,5 @@ tokio = { version = "1", features = ["rt", "sync"] }
 
 [profile.release]
 opt-level = 3
-lto = true
+lto = false
 strip = true

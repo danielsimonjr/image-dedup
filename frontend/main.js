@@ -524,6 +524,14 @@ document.getElementById("zoom-fit").addEventListener("click", zoomFit);
 document.getElementById("toolbar-zoom-in").addEventListener("click", zoomIn);
 document.getElementById("toolbar-zoom-out").addEventListener("click", zoomOut);
 
+// Ctrl+Wheel zoom
+previewContent.addEventListener("wheel", (e) => {
+  if (!e.ctrlKey) return;
+  e.preventDefault();
+  if (e.deltaY < 0) zoomIn();
+  else zoomOut();
+}, { passive: false });
+
 // ── Helpers ─────────────────────────────────────────────────────────────
 
 function formatSize(bytes) {
