@@ -1,0 +1,44 @@
+# Git internals — keeps Dropbox out of .git so git operations don't get blocked
+.git/
+
+# Rust / Tauri
+/src-tauri/target
+/target
+Cargo.lock
+
+# Build outputs
+/build
+/dist
+
+# Node
+node_modules/
+package-lock.json
+
+# Python (legacy)
+__pycache__/
+.pytest_cache/
+*.py[cod]
+*.pyd
+*.dll
+*.so
+*.spec
+.Python
+.venv/
+env/
+venv/
+*.egg-info/
+*.egg
+
+# OS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
+
+# Generated
+app-icon.png
+
+# Test data
+test_images/
+
