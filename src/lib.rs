@@ -12,6 +12,26 @@ const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "gif", "bmp", "tiff", 
 /// this pixel budget is rejected before decode. Mirrors the Tauri side.
 const MAX_DECODE_PIXELS: u64 = 50_000_000;
 
+/// Streaming MD5 buffer size (#7).
+const HASH_BUF_BYTES: usize = 64 * 1024;
+
+fn stream_md5(path: &Path) -> std::io::Result<(String, u64)> {
+    use std::io::Read;
+    let file = std::fs::File::open(path)?;
+    let size = file.metadata()?.len();
+    let mut reader = std::io::BufReader::with_capacity(HASH_BUF_BYTES, file);
+    let mut hasher = Md5::new();
+    let mut buf = [0u8; HASH_BUF_BYTES];
+    loop {
+        let n = reader.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok((hex::encode(hasher.finalize()), size))
+}
+
 /// Perceptual hash: resize to 32x32 grayscale, compute DCT, take top-left 8x8,
 /// binarize around median → 64-bit hash.
 fn compute_phash(img: &image::GrayImage) -> u64 {
@@ -231,9 +251,8 @@ fn scan_images(
             let phash = compute_phash(&gray);
             let dhash = compute_dhash(&gray);
 
-            let file_bytes = std::fs::read(path).ok()?;
-            let file_size = file_bytes.len() as u64;
-            let md5 = hex::encode(Md5::digest(&file_bytes));
+            // #7: stream MD5 in 64-KiB chunks; size comes from metadata.
+            let (md5, file_size) = stream_md5(path).ok()?;
 
             Some(ImageInfo {
                 path: path.to_string_lossy().to_string(),

@@ -36,6 +36,22 @@ Image.MAX_IMAGE_PIXELS = MAX_DECODE_PIXELS
 STRICT_SSIM = 0.98
 DHASH_AGREE_DISTANCE = 10
 
+# ── Streaming MD5 (#7) ──────────────────────────────────────────────────
+HASH_BUF_BYTES = 64 * 1024
+
+
+def _stream_md5(path: Path) -> str:
+    """Compute MD5 in 64 KiB chunks instead of loading the whole file.
+
+    Replaces ``hashlib.md5(path.read_bytes())`` which materialized the
+    entire file in RAM N times in parallel.
+    """
+    h = hashlib.md5()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(HASH_BUF_BYTES), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
 
 IMAGE_EXTENSIONS = {
     ".jpg",
@@ -121,8 +137,9 @@ def scan_images(
 
             file_size = img_path.stat().st_size
 
-            # Quick MD5 for exact-duplicate fast path
-            md5 = hashlib.md5(img_path.read_bytes()).hexdigest()
+            # #7: streaming MD5 instead of read_bytes(). Avoids loading
+            # the whole file into RAM in N parallel threads.
+            md5 = _stream_md5(img_path)
 
             return ImageInfo(
                 path=img_path,

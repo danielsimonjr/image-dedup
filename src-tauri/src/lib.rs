@@ -17,6 +17,30 @@ const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "gif", "bmp", "tiff", 
 /// e.g. 8K ≈ 33 MP and most DSLR raws while blocking 65535×65535 attack PNGs.
 const MAX_DECODE_PIXELS: u64 = 50_000_000;
 
+/// Buffer size for the streaming MD5 path (#7). 64 KiB is a good
+/// trade-off — large enough to amortize syscall + decode overhead,
+/// small enough that N rayon threads fit comfortably in cache/RAM.
+const HASH_BUF_BYTES: usize = 64 * 1024;
+
+/// Stream MD5 of a file in 64-KiB chunks, returning (hex_digest, file_size).
+/// Replaces the old `std::fs::read(path)` whole-file load (#7).
+fn stream_md5(path: &Path) -> std::io::Result<(String, u64)> {
+    use std::io::Read;
+    let file = std::fs::File::open(path)?;
+    let size = file.metadata()?.len();
+    let mut reader = std::io::BufReader::with_capacity(HASH_BUF_BYTES, file);
+    let mut hasher = Md5::new();
+    let mut buf = [0u8; HASH_BUF_BYTES];
+    loop {
+        let n = reader.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buf[..n]);
+    }
+    Ok((hex::encode(hasher.finalize()), size))
+}
+
 // ── Path allow-list ─────────────────────────────────────────────────────
 // Only paths that scan_images has actually visited may be opened or
 // deleted by the renderer. Canonicalized to defeat symlink / `..` traversal.
@@ -347,9 +371,10 @@ fn scan_images_sync(
             let gray = img.to_luma8();
             let phash = compute_phash(&gray);
             let dhash = compute_dhash(&gray);
-            let file_bytes = std::fs::read(path).ok()?;
-            let file_size = file_bytes.len() as u64;
-            let md5 = hex::encode(Md5::digest(&file_bytes));
+            // Stream MD5 in 64-KiB chunks instead of loading whole file
+            // into RAM (#7). file_size comes from metadata().len() so we
+            // don't double-read.
+            let (md5, file_size) = stream_md5(path).ok()?;
 
             let done = scanned.fetch_add(1, Ordering::Relaxed) + 1;
             if done % 5 == 0 || done == total {
