@@ -168,6 +168,36 @@ fn hamming_distance(a: u64, b: u64) -> u32 {
     (a ^ b).count_ones()
 }
 
+// ── dHash (difference hash) ─────────────────────────────────────────────
+// Independent of pHash — compares adjacent-pixel gradients on a 9x8 grid.
+// Used as a corroborating signal for pHash + SSIM in the 0.90-0.98 band.
+
+fn compute_dhash(img: &image::GrayImage) -> u64 {
+    let resized = image::imageops::resize(img, 9, 8, image::imageops::FilterType::Lanczos3);
+    let mut hash: u64 = 0;
+    for y in 0..8u32 {
+        for x in 0..8u32 {
+            let left = resized.get_pixel(x, y)[0];
+            let right = resized.get_pixel(x + 1, y)[0];
+            if left > right {
+                hash |= 1 << (y * 8 + x);
+            }
+        }
+    }
+    hash
+}
+
+// ── Confidence thresholds (#6) ──────────────────────────────────────────
+// SSIM >= STRICT_SSIM => high confidence, auto-group.
+// LOW_SSIM <= SSIM < STRICT_SSIM => only auto-group if dHash also agrees.
+// Below LOW_SSIM => not a duplicate.
+//
+// Rationale: pHash + SSIM>=0.90 alone is forgeable. Either tighten SSIM
+// or require an independent hash to agree. Dual-signal cuts FP rate without
+// dropping recall too far on real near-duplicates.
+const STRICT_SSIM: f64 = 0.98;
+const DHASH_AGREE_DISTANCE: u32 = 10;
+
 // ── Data types ──────────────────────────────────────────────────────────
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -177,6 +207,10 @@ pub struct ImageInfo {
     pub height: u32,
     pub file_size: u64,
     pub phash: u64,
+    /// dHash — independent corroborating signal for #6.
+    /// Default 0 (back-compat for callers / saved data).
+    #[serde(default)]
+    pub dhash: u64,
     pub md5: String,
 }
 
@@ -191,7 +225,15 @@ pub struct DuplicateGroup {
     pub keeper: ImageInfo,
     pub duplicates: Vec<ImageInfo>,
     pub scores: Vec<(String, f64)>,
+    /// "high" => MD5 match or strict SSIM (>=0.98) or pHash+dHash+SSIM>=ssim_threshold;
+    /// "low"  => SSIM in [ssim_threshold, 0.98) without dHash agreement.
+    /// Low-confidence groups are NEVER auto-deleted by delete_files —
+    /// the renderer should surface them as "review needed".
+    #[serde(default = "default_confidence")]
+    pub confidence: String,
 }
+
+fn default_confidence() -> String { "high".to_string() }
 
 #[derive(Clone, Serialize)]
 pub struct ScanProgress {
@@ -304,6 +346,7 @@ fn scan_images_sync(
             }
             let gray = img.to_luma8();
             let phash = compute_phash(&gray);
+            let dhash = compute_dhash(&gray);
             let file_bytes = std::fs::read(path).ok()?;
             let file_size = file_bytes.len() as u64;
             let md5 = hex::encode(Md5::digest(&file_bytes));
@@ -326,6 +369,7 @@ fn scan_images_sync(
                 height,
                 file_size,
                 phash,
+                dhash,
                 md5,
             })
         })
@@ -417,7 +461,10 @@ fn find_duplicates_sync(
     let verified_count = AtomicUsize::new(0);
     let app_ref = app.clone();
 
-    let verified: Vec<(usize, usize, f64)> = pairs
+    // verified carries (i, j, ssim_score, high_confidence).
+    // #6: high-confidence requires MD5 match OR SSIM >= STRICT_SSIM
+    // OR (SSIM >= ssim_threshold AND dHash distance <= DHASH_AGREE_DISTANCE).
+    let verified: Vec<(usize, usize, f64, bool)> = pairs
         .par_iter()
         .filter_map(|&(i, j)| {
             let done = verified_count.fetch_add(1, Ordering::Relaxed) + 1;
@@ -429,23 +476,24 @@ fn find_duplicates_sync(
             }
 
             if !images[i].md5.is_empty() && images[i].md5 == images[j].md5 {
-                return Some((i, j, 1.0));
+                return Some((i, j, 1.0, true));
             }
             let img_a = image::open(&images[i].path).ok()?.to_luma8();
             let img_b = image::open(&images[j].path).ok()?.to_luma8();
             let score = compute_ssim_internal(&img_a, &img_b, 256);
-            if score >= ssim_threshold {
-                Some((i, j, score))
-            } else {
-                None
+            if score < ssim_threshold {
+                return None;
             }
+            let dhash_dist = hamming_distance(images[i].dhash, images[j].dhash);
+            let high = score >= STRICT_SSIM || dhash_dist <= DHASH_AGREE_DISTANCE;
+            Some((i, j, score, high))
         })
         .collect();
 
-    let mut pair_scores: Vec<(usize, usize, f64)> = Vec::new();
-    for (i, j, score) in verified {
+    let mut pair_scores: Vec<(usize, usize, f64, bool)> = Vec::new();
+    for (i, j, score, high) in verified {
         union(&mut parent, &mut rank, i, j);
-        pair_scores.push((i, j, score));
+        pair_scores.push((i, j, score, high));
     }
 
     let mut groups_map: std::collections::HashMap<usize, Vec<usize>> =
@@ -476,20 +524,35 @@ fn find_duplicates_sync(
             .map(|d| {
                 let score = pair_scores
                     .iter()
-                    .find(|(a, b, _)| {
+                    .find(|(a, b, _, _)| {
                         let paths = [&images[*a].path, &images[*b].path];
                         paths.contains(&&d.path) && paths.contains(&&keeper.path)
                     })
-                    .map(|(_, _, s)| *s)
+                    .map(|(_, _, s, _)| *s)
                     .unwrap_or(0.0);
                 (d.path.clone(), score)
             })
             .collect();
 
+        // Group is high confidence only if EVERY duplicate vs keeper edge
+        // is high confidence. Any low edge demotes the whole group so the
+        // UI can flag it for manual review.
+        let group_paths: std::collections::HashSet<&str> =
+            indices.iter().map(|&i| images[i].path.as_str()).collect();
+        let all_high = pair_scores
+            .iter()
+            .filter(|(a, b, _, _)| {
+                group_paths.contains(images[*a].path.as_str())
+                    && group_paths.contains(images[*b].path.as_str())
+            })
+            .all(|(_, _, _, h)| *h);
+        let confidence = if all_high { "high" } else { "low" }.to_string();
+
         results.push(DuplicateGroup {
             keeper,
             duplicates,
             scores,
+            confidence,
         });
     }
 

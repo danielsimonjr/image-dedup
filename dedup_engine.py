@@ -30,6 +30,12 @@ import numpy as np
 MAX_DECODE_PIXELS = 50_000_000
 Image.MAX_IMAGE_PIXELS = MAX_DECODE_PIXELS
 
+# ── pHash collision hardening (#6) ──────────────────────────────────────
+# When MD5 differs and SSIM falls below STRICT_SSIM, require dHash to also
+# agree before classifying a pair as a high-confidence duplicate.
+STRICT_SSIM = 0.98
+DHASH_AGREE_DISTANCE = 10
+
 
 IMAGE_EXTENSIONS = {
     ".jpg",
@@ -50,6 +56,7 @@ class ImageInfo:
     height: int
     file_size: int
     phash: Optional[imagehash.ImageHash] = None
+    dhash: Optional[imagehash.ImageHash] = None
     md5: str = ""
 
     @property
@@ -66,6 +73,7 @@ class DuplicateGroup:
     keeper: ImageInfo
     duplicates: list[ImageInfo] = field(default_factory=list)
     scores: dict[str, float] = field(default_factory=dict)  # path -> ssim score
+    confidence: str = "high"  # "high" or "low" — see #6
 
 
 def scan_images(
@@ -109,6 +117,7 @@ def scan_images(
                 except DecompressionBombError:
                     return None
                 phash = imagehash.phash(img)
+                dhash = imagehash.dhash(img)
 
             file_size = img_path.stat().st_size
 
@@ -121,6 +130,7 @@ def scan_images(
                 height=h,
                 file_size=file_size,
                 phash=phash,
+                dhash=dhash,
                 md5=md5,
             )
         except DecompressionBombError:
@@ -200,8 +210,9 @@ def find_duplicates(
         if ra != rb:
             parent[ra] = rb
 
-    # Track SSIM scores for each confirmed pair
+    # Track SSIM scores + confidence flag for each confirmed pair (#6)
     pair_scores: dict[tuple[int, int], float] = {}
+    pair_confidence: dict[tuple[int, int], bool] = {}  # True = high
 
     total_pairs = n * (n - 1) // 2
     checked = 0
@@ -215,6 +226,7 @@ def find_duplicates(
             if images[i].md5 and images[i].md5 == images[j].md5:
                 union(i, j)
                 pair_scores[(i, j)] = 1.0
+                pair_confidence[(i, j)] = True
                 if progress_callback:
                     progress_callback(checked, total_pairs, "MD5 exact match")
                 continue
@@ -234,6 +246,13 @@ def find_duplicates(
             if score >= ssim_threshold:
                 union(i, j)
                 pair_scores[(i, j)] = score
+                # #6: only "high" confidence if SSIM is strict OR
+                # dHash also agrees. Otherwise group must be marked
+                # for manual review (no auto-delete).
+                high = score >= STRICT_SSIM
+                if not high and images[i].dhash is not None and images[j].dhash is not None:
+                    high = (images[i].dhash - images[j].dhash) <= DHASH_AGREE_DISTANCE
+                pair_confidence[(i, j)] = high
 
             if progress_callback and checked % 50 == 0:
                 progress_callback(checked, total_pairs, f"SSIM={score:.3f}")
@@ -257,7 +276,21 @@ def find_duplicates(
         keeper = members[0]
         dupes = members[1:]
 
-        group = DuplicateGroup(keeper=keeper, duplicates=dupes)
+        # Group is high confidence only if EVERY edge connecting members
+        # is high confidence (#6).
+        member_paths = {str(m.path) for m in members}
+        all_high = True
+        for (a, b), high in pair_confidence.items():
+            if str(images[a].path) in member_paths and str(images[b].path) in member_paths:
+                if not high:
+                    all_high = False
+                    break
+
+        group = DuplicateGroup(
+            keeper=keeper,
+            duplicates=dupes,
+            confidence="high" if all_high else "low",
+        )
 
         # Attach SSIM scores
         for d in dupes:
@@ -275,10 +308,21 @@ def find_duplicates(
     return results
 
 
-def delete_duplicates(groups: list[DuplicateGroup], send_to_trash: bool = True):
-    """Delete the lower-resolution duplicates. Returns list of deleted paths."""
+def delete_duplicates(
+    groups: list[DuplicateGroup],
+    send_to_trash: bool = True,
+    include_low_confidence: bool = False,
+):
+    """Delete the lower-resolution duplicates. Returns list of deleted paths.
+
+    #6: low-confidence groups (SSIM in [threshold, 0.98) without dHash
+    agreement) are NEVER auto-deleted unless the caller opts in
+    explicitly via include_low_confidence=True.
+    """
     deleted = []
     for group in groups:
+        if group.confidence != "high" and not include_low_confidence:
+            continue
         for dupe in group.duplicates:
             try:
                 if send_to_trash:
