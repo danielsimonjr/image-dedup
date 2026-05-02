@@ -19,8 +19,16 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import imagehash
 from PIL import Image
+from PIL.Image import DecompressionBombError
 from skimage.metrics import structural_similarity as ssim
 import numpy as np
+
+
+# ── Decompression-bomb guard ────────────────────────────────────────────
+# Pillow defaults MAX_IMAGE_PIXELS to ~89 MP and only WARNS (doesn't raise)
+# until 2× that. Lock it down to 50 MP and treat the warning as a hard error.
+MAX_DECODE_PIXELS = 50_000_000
+Image.MAX_IMAGE_PIXELS = MAX_DECODE_PIXELS
 
 
 IMAGE_EXTENSIONS = {
@@ -88,8 +96,18 @@ def scan_images(
     def process_one(img_path: Path) -> Optional[ImageInfo]:
         try:
             with Image.open(img_path) as img:
-                img.load()
+                # Cheap dimension peek before .load() — bombs never get
+                # decoded into RAM. Pillow raises DecompressionBombError
+                # automatically once MAX_IMAGE_PIXELS is exceeded, but we
+                # also explicitly check so we can short-circuit on
+                # malformed headers.
                 w, h = img.size
+                if w * h > MAX_DECODE_PIXELS:
+                    return None
+                try:
+                    img.load()
+                except DecompressionBombError:
+                    return None
                 phash = imagehash.phash(img)
 
             file_size = img_path.stat().st_size
@@ -105,6 +123,8 @@ def scan_images(
                 phash=phash,
                 md5=md5,
             )
+        except DecompressionBombError:
+            return None
         except Exception:
             return None
 
@@ -125,6 +145,11 @@ def compute_ssim(img1_path: Path, img2_path: Path, target_size: int = 256) -> fl
     """Compute SSIM between two images after resizing to a common dimension."""
     try:
         with Image.open(img1_path) as im1, Image.open(img2_path) as im2:
+            # Bomb guard before convert/resize materialize the pixel buffer.
+            for im in (im1, im2):
+                w, h = im.size
+                if w * h > MAX_DECODE_PIXELS:
+                    return 0.0
             # Convert to grayscale and resize to common size for fair comparison
             im1_gray = im1.convert("L").resize(
                 (target_size, target_size), Image.LANCZOS
@@ -137,6 +162,8 @@ def compute_ssim(img1_path: Path, img2_path: Path, target_size: int = 256) -> fl
             arr2 = np.array(im2_gray)
 
             return float(ssim(arr1, arr2))
+    except DecompressionBombError:
+        return 0.0
     except Exception:
         return 0.0
 

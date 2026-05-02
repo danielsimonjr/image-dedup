@@ -8,6 +8,10 @@ use walkdir::WalkDir;
 
 const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "gif", "bmp", "tiff", "tif", "webp"];
 
+/// Decompression-bomb guard: any image whose declared dimensions exceed
+/// this pixel budget is rejected before decode. Mirrors the Tauri side.
+const MAX_DECODE_PIXELS: u64 = 50_000_000;
+
 /// Perceptual hash: resize to 32x32 grayscale, compute DCT, take top-left 8x8,
 /// binarize around median → 64-bit hash.
 fn compute_phash(img: &image::GrayImage) -> u64 {
@@ -201,6 +205,17 @@ fn scan_images(
     let results: Vec<Option<ImageInfo>> = image_paths
         .par_iter()
         .map(|path| {
+            // Cheap dimension peek BEFORE decode — rejects decompression
+            // bombs without ever allocating the full pixel buffer.
+            let reader = image::ImageReader::open(path)
+                .ok()?
+                .with_guessed_format()
+                .ok()?;
+            let (peek_w, peek_h) = reader.into_dimensions().ok()?;
+            if (peek_w as u64) * (peek_h as u64) > MAX_DECODE_PIXELS {
+                return None;
+            }
+
             let img = image::open(path).ok()?;
             let (width, height) = img.dimensions();
             // Skip images below minimum dimensions

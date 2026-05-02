@@ -12,6 +12,11 @@ use walkdir::WalkDir;
 
 const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "gif", "bmp", "tiff", "tif", "webp"];
 
+/// Decompression-bomb guard: any image whose declared dimensions exceed
+/// this pixel budget is rejected before decode. 50 megapixels accommodates
+/// e.g. 8K ≈ 33 MP and most DSLR raws while blocking 65535×65535 attack PNGs.
+const MAX_DECODE_PIXELS: u64 = 50_000_000;
+
 // ── Path allow-list ─────────────────────────────────────────────────────
 // Only paths that scan_images has actually visited may be opened or
 // deleted by the renderer. Canonicalized to defeat symlink / `..` traversal.
@@ -265,6 +270,26 @@ fn scan_images_sync(
     let results: Vec<Option<ImageInfo>> = image_paths
         .par_iter()
         .map(|path| {
+            // Cheap dimension peek BEFORE decode — rejects decompression
+            // bombs (e.g. 65535x65535 PNGs) without ever allocating the
+            // full pixel buffer.
+            let reader = image::ImageReader::open(path)
+                .ok()?
+                .with_guessed_format()
+                .ok()?;
+            let (peek_w, peek_h) = reader.into_dimensions().ok()?;
+            if (peek_w as u64) * (peek_h as u64) > MAX_DECODE_PIXELS {
+                let done = scanned.fetch_add(1, Ordering::Relaxed) + 1;
+                if done % 5 == 0 || done == total {
+                    let _ = app_ref.emit("scan_progress", ScanProgress {
+                        scanned: done, total,
+                        current_file: format!("skipped (too large): {}",
+                            path.file_name().unwrap_or_default().to_string_lossy()),
+                    });
+                }
+                return None;
+            }
+
             let img = image::open(path).ok()?;
             let (width, height) = img.dimensions();
             if width < min_width || height < min_height {
