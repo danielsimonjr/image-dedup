@@ -15,6 +15,7 @@
     <label>Min size: <input type="number" id="min-width" value="50" min="1" max="1000" style="width:50px" />×<input type="number" id="min-height" value="50" min="1" max="1000" style="width:50px" /></label>
     <button id="btn-scan" disabled>🔍 Scan</button>
     <button id="btn-delete-all" disabled title="Delete all marked duplicates">🗑️ Delete All Duplicates</button>
+    <button id="btn-export" disabled title="Export results to CSV">📋 Export CSV</button>
     <div id="spacer"></div>
     <div id="filter-buttons">
       <button class="filter-btn active" data-filter="all">All</button>
@@ -57,7 +58,7 @@
     <div id="resizer"></div>
     <div id="preview-panel">
       <div id="preview-header">
-        <span>Preview</span>
+        <span>Preview <button id="btn-compare" class="small-btn" disabled title="Ctrl+click two rows to compare">Compare</button></span>
         <div id="zoom-controls">
           <button id="zoom-out" title="Zoom out">−</button>
           <span id="zoom-level">Fit</span>
@@ -76,6 +77,44 @@
   <div id="status-bar">
     <span id="status-text">Ready</span>
     <span id="status-stats"></span>
+  </div>
+
+  <!-- Compare modal -->
+  <div id="compare-overlay" class="hidden">
+    <div id="compare-modal">
+      <div id="compare-header">
+        <span>Side-by-Side Comparison</span>
+        <div id="compare-zoom-controls">
+          <button id="compare-zoom-out" title="Zoom out">−</button>
+          <span id="compare-zoom-level">Fit</span>
+          <button id="compare-zoom-in" title="Zoom in">+</button>
+          <button id="compare-zoom-fit" title="Fit to panel">⊡</button>
+        </div>
+        <button id="compare-close" title="Close">✕</button>
+      </div>
+      <div id="compare-body">
+        <div class="compare-pane">
+          <div class="compare-img-wrap"><img id="compare-img-a" /></div>
+          <div class="compare-info" id="compare-info-a"></div>
+        </div>
+        <div class="compare-divider"></div>
+        <div class="compare-pane">
+          <div class="compare-img-wrap"><img id="compare-img-b" /></div>
+          <div class="compare-info" id="compare-info-b"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Undo toast -->
+  <div id="undo-toast" class="hidden">
+    <span id="undo-message"></span>
+    <button id="undo-btn">Undo</button>
+  </div>
+
+  <!-- Drop overlay -->
+  <div id="drop-overlay" class="hidden">
+    <div id="drop-message">Drop folder here</div>
   </div>
 
   <script src="main.js"></script>

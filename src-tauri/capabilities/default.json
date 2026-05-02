@@ -5,9 +5,11 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
+    "core:event:default",
     "dialog:default",
     "dialog:allow-open",
     "dialog:allow-confirm",
+    "dialog:allow-save",
     "fs:default",
     "fs:allow-read",
     "shell:default"

@@ -1,5 +1,6 @@
 const { invoke } = window.__TAURI__.core;
-const { open: openDialog, confirm } = window.__TAURI__.dialog;
+const { listen } = window.__TAURI__.event;
+const { open: openDialog, save: saveDialog, confirm } = window.__TAURI__.dialog;
 
 // ── State ───────────────────────────────────────────────────────────────
 
@@ -9,6 +10,8 @@ let sortCol = "group";
 let sortAsc = true;
 let activeFilter = "all";
 let selectedRowIdx = -1;
+let compareSelection = []; // up to 2 rows for comparison
+let undoStack = [];        // [{deletedRows, paths}]
 
 // ── DOM refs ────────────────────────────────────────────────────────────
 
@@ -28,6 +31,9 @@ const previewContent = document.getElementById("preview-content");
 const previewInfo = document.getElementById("preview-info");
 const statusText = document.getElementById("status-text");
 const statusStats = document.getElementById("status-stats");
+const btnExport = document.getElementById("btn-export");
+const btnCompare = document.getElementById("btn-compare");
+const progressBar = document.getElementById("progress-bar");
 
 // ── Browse folder ───────────────────────────────────────────────────────
 
@@ -51,11 +57,28 @@ btnScan.addEventListener("click", async () => {
 
   btnScan.disabled = true;
   btnDeleteAll.disabled = true;
+  btnExport.disabled = true;
   progressContainer.classList.remove("hidden");
+  progressBar.style.setProperty("--progress", "0%");
   progressText.textContent = "Scanning images...";
   statusText.textContent = "Scanning...";
   emptyState.style.display = "none";
   tbody.textContent = "";
+
+  // Listen for progress events
+  const unlistenScan = await listen("scan_progress", (e) => {
+    const { scanned, total, current_file } = e.payload;
+    const pct = total > 0 ? Math.round((scanned / total) * 100) : 0;
+    progressBar.style.setProperty("--progress", pct + "%");
+    progressText.textContent = `Scanning: ${scanned}/${total} — ${current_file}`;
+  });
+
+  const unlistenDedup = await listen("dedup_progress", (e) => {
+    const { done, total, message } = e.payload;
+    const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+    progressBar.style.setProperty("--progress", pct + "%");
+    progressText.textContent = message;
+  });
 
   try {
     // Step 1: scan images
@@ -73,9 +96,11 @@ btnScan.addEventListener("click", async () => {
       emptyState.style.display = "";
       emptyState.textContent = "No images found in the selected folder.";
       btnScan.disabled = false;
+      unlistenScan(); unlistenDedup();
       return;
     }
 
+    progressBar.style.setProperty("--progress", "0%");
     progressText.textContent = `Found ${images.length} images. Running SSIM verification...`;
 
     // Step 2: find duplicates
@@ -92,6 +117,7 @@ btnScan.addEventListener("click", async () => {
       emptyState.style.display = "";
       emptyState.textContent = `Scanned ${images.length} images — no duplicates detected.`;
       btnScan.disabled = false;
+      unlistenScan(); unlistenDedup();
       return;
     }
 
@@ -100,6 +126,7 @@ btnScan.addEventListener("click", async () => {
     renderTable();
     updateStats();
     btnDeleteAll.disabled = false;
+    btnExport.disabled = false;
     statusText.textContent = "Scan complete.";
   } catch (e) {
     progressContainer.classList.add("hidden");
@@ -107,6 +134,7 @@ btnScan.addEventListener("click", async () => {
     console.error(e);
   }
 
+  unlistenScan(); unlistenDedup();
   btnScan.disabled = false;
 });
 
@@ -221,8 +249,24 @@ function renderTable() {
     tdPath.title = row.path;
     tr.appendChild(tdPath);
 
-    // Row click -> preview
-    tr.addEventListener("click", () => {
+    // Row click -> preview (Ctrl+click -> compare selection)
+    tr.addEventListener("click", (e) => {
+      if (e.ctrlKey) {
+        // Add to compare selection
+        if (compareSelection.length < 2 && !compareSelection.find(r => r.path === row.path)) {
+          compareSelection.push(row);
+          tr.classList.add("compare-selected");
+        }
+        if (compareSelection.length === 2) {
+          btnCompare.disabled = false;
+        }
+        return;
+      }
+      // Clear compare selection on normal click
+      compareSelection = [];
+      btnCompare.disabled = true;
+      document.querySelectorAll("tbody tr.compare-selected").forEach(el => el.classList.remove("compare-selected"));
+
       selectedRowIdx = rows.indexOf(row);
       document.querySelectorAll("tbody tr.selected").forEach(el => el.classList.remove("selected"));
       tr.classList.add("selected");
@@ -393,7 +437,7 @@ btnDeleteAll.addEventListener("click", async () => {
 
   const totalSize = toDelete.reduce((s, r) => s + r.fileSize, 0);
   const ok = await confirm(
-    `Delete ${toDelete.length} duplicate files (${formatSize(totalSize)})?\n\nThis action cannot be undone.`,
+    `Send ${toDelete.length} duplicate files (${formatSize(totalSize)}) to trash?`,
     { title: "Confirm Deletion", kind: "warning" }
   );
 
@@ -403,13 +447,18 @@ btnDeleteAll.addEventListener("click", async () => {
   const paths = toDelete.map((r) => r.path);
 
   try {
-    const errors = await invoke("delete_files", { paths });
+    const errors = await invoke("send_to_trash", { paths });
     if (errors.length > 0) {
       statusText.textContent = `Deleted with ${errors.length} errors. Check console.`;
       console.error("Delete errors:", errors);
     } else {
       statusText.textContent = `Deleted ${toDelete.length} files, recovered ${formatSize(totalSize)}.`;
     }
+
+    // Save to undo stack (deep copy the deleted rows)
+    const deletedRows = toDelete.map(r => ({ ...r }));
+    undoStack.push({ deletedRows, paths });
+    showUndoToast(`Deleted ${toDelete.length} files (${formatSize(totalSize)})`);
 
     // Remove deleted rows
     const deletedSet = new Set(paths);
@@ -427,6 +476,7 @@ btnDeleteAll.addEventListener("click", async () => {
 
     if (rows.length === 0) {
       btnDeleteAll.disabled = true;
+      btnExport.disabled = true;
       emptyState.style.display = "";
       emptyState.textContent = "All duplicates have been deleted!";
     }
@@ -527,6 +577,190 @@ previewContent.addEventListener("wheel", (e) => {
   if (!e.ctrlKey) return;
   if (e.deltaY < 0) zoomIn();
   else zoomOut();
+});
+
+// ── Side-by-side comparison ─────────────────────────────────────────────
+
+let compareZoom = ZOOM_FIT;
+
+btnCompare.addEventListener("click", () => {
+  if (compareSelection.length === 2) openCompare(compareSelection[0], compareSelection[1]);
+});
+
+function applyCompareZoom() {
+  const imgA = document.getElementById("compare-img-a");
+  const imgB = document.getElementById("compare-img-b");
+  const label = document.getElementById("compare-zoom-level");
+  const wrapA = imgA.parentElement;
+  const wrapB = imgB.parentElement;
+
+  if (compareZoom === ZOOM_FIT) {
+    imgA.style.maxWidth = "100%"; imgA.style.maxHeight = "100%";
+    imgA.style.width = ""; imgA.style.height = "";
+    imgB.style.maxWidth = "100%"; imgB.style.maxHeight = "100%";
+    imgB.style.width = ""; imgB.style.height = "";
+    wrapA.style.alignItems = "center"; wrapA.style.justifyContent = "center";
+    wrapB.style.alignItems = "center"; wrapB.style.justifyContent = "center";
+    label.textContent = "Fit";
+  } else {
+    const pct = (compareZoom * 100) + "%";
+    imgA.style.maxWidth = "none"; imgA.style.maxHeight = "none";
+    imgA.style.width = pct; imgA.style.height = "auto";
+    imgB.style.maxWidth = "none"; imgB.style.maxHeight = "none";
+    imgB.style.width = pct; imgB.style.height = "auto";
+    wrapA.style.alignItems = "flex-start"; wrapA.style.justifyContent = "flex-start";
+    wrapB.style.alignItems = "flex-start"; wrapB.style.justifyContent = "flex-start";
+    label.textContent = Math.round(compareZoom * 100) + "%";
+  }
+}
+
+function compareZoomIn() {
+  if (compareZoom === ZOOM_FIT) compareZoom = 1.0;
+  else { const next = ZOOM_STEPS.find(z => z > compareZoom); if (next) compareZoom = next; }
+  applyCompareZoom();
+}
+
+function compareZoomOut() {
+  if (compareZoom === ZOOM_FIT) compareZoom = 0.75;
+  else { const prev = [...ZOOM_STEPS].reverse().find(z => z < compareZoom); if (prev) compareZoom = prev; }
+  applyCompareZoom();
+}
+
+document.getElementById("compare-zoom-in").addEventListener("click", compareZoomIn);
+document.getElementById("compare-zoom-out").addEventListener("click", compareZoomOut);
+document.getElementById("compare-zoom-fit").addEventListener("click", () => {
+  compareZoom = ZOOM_FIT;
+  applyCompareZoom();
+});
+
+// Ctrl+Wheel zoom on compare panes
+document.getElementById("compare-body").addEventListener("wheel", (e) => {
+  if (!e.ctrlKey) return;
+  e.preventDefault();
+  if (e.deltaY < 0) compareZoomIn();
+  else compareZoomOut();
+}, { passive: false });
+
+async function openCompare(rowA, rowB) {
+  const overlay = document.getElementById("compare-overlay");
+  const imgA = document.getElementById("compare-img-a");
+  const imgB = document.getElementById("compare-img-b");
+  const infoA = document.getElementById("compare-info-a");
+  const infoB = document.getElementById("compare-info-b");
+
+  compareZoom = ZOOM_FIT;
+  overlay.classList.remove("hidden");
+
+  infoA.textContent = "Loading...";
+  infoB.textContent = "Loading...";
+  imgA.src = "";
+  imgB.src = "";
+
+  try {
+    const [dataA, dataB] = await Promise.all([
+      invoke("get_image_base64", { path: rowA.path }),
+      invoke("get_image_base64", { path: rowB.path }),
+    ]);
+    imgA.src = dataA;
+    imgB.src = dataB;
+    applyCompareZoom();
+
+    const nameA = rowA.path.split("\\").pop() || rowA.path.split("/").pop();
+    const nameB = rowB.path.split("\\").pop() || rowB.path.split("/").pop();
+    infoA.textContent = `${nameA}\n${rowA.width}×${rowA.height} · ${formatSize(rowA.fileSize)} · ${rowA.action}`;
+    infoB.textContent = `${nameB}\n${rowB.width}×${rowB.height} · ${formatSize(rowB.fileSize)} · ${rowB.action}`;
+  } catch (e) {
+    infoA.textContent = "Error loading image";
+    infoB.textContent = "Error loading image";
+  }
+}
+
+document.getElementById("compare-close").addEventListener("click", () => {
+  document.getElementById("compare-overlay").classList.add("hidden");
+});
+
+document.getElementById("compare-overlay").addEventListener("click", (e) => {
+  if (e.target.id === "compare-overlay") {
+    document.getElementById("compare-overlay").classList.add("hidden");
+  }
+});
+
+// ── Undo delete ────────────────────────────────────────────────────────
+
+let undoTimer = null;
+
+function showUndoToast(message) {
+  const toast = document.getElementById("undo-toast");
+  document.getElementById("undo-message").textContent = message;
+  toast.classList.remove("hidden");
+  clearTimeout(undoTimer);
+  undoTimer = setTimeout(() => toast.classList.add("hidden"), 8000);
+}
+
+document.getElementById("undo-btn").addEventListener("click", () => {
+  if (undoStack.length === 0) return;
+  const last = undoStack.pop();
+
+  // Restore rows back into the table
+  last.deletedRows.forEach(r => rows.push(r));
+  // Re-sort and re-number
+  sortRows();
+  renumberGroups();
+  renderTable();
+  updateStats();
+
+  btnDeleteAll.disabled = false;
+  btnExport.disabled = false;
+  emptyState.style.display = rows.length ? "none" : "";
+
+  document.getElementById("undo-toast").classList.add("hidden");
+  statusText.textContent = `Restored ${last.deletedRows.length} files to the list. (Files remain in trash on disk.)`;
+});
+
+// ── Drag and drop folder ───────────────────────────────────────────────
+
+const dropOverlay = document.getElementById("drop-overlay");
+
+listen("tauri://drag-enter", () => {
+  dropOverlay.classList.remove("hidden");
+});
+
+listen("tauri://drag-leave", () => {
+  dropOverlay.classList.add("hidden");
+});
+
+listen("tauri://drag-drop", (event) => {
+  dropOverlay.classList.add("hidden");
+  const paths = event.payload.paths;
+  if (paths && paths.length > 0) {
+    // Use the first dropped path
+    folderPath.value = paths[0];
+    btnScan.disabled = false;
+    statusText.textContent = `Folder set: ${paths[0]}`;
+  }
+});
+
+// ── Export CSV ──────────────────────────────────────────────────────────
+
+btnExport.addEventListener("click", async () => {
+  const path = await saveDialog({
+    defaultPath: "image-dedup-report.csv",
+    filters: [{ name: "CSV", extensions: ["csv"] }],
+  });
+  if (!path) return;
+
+  const header = "Group,Action,Resolution,File Size,File Size (bytes),SSIM,Path";
+  const csvRows = rows.map(r =>
+    `${r.groupNum},${r.action},"${r.width}×${r.height}",${formatSize(r.fileSize)},${r.fileSize},${r.ssim.toFixed(4)},"${r.path.replace(/"/g, '""')}"`
+  );
+  const csv = [header, ...csvRows].join("\n");
+
+  try {
+    await invoke("export_csv", { path, csvContent: csv });
+    statusText.textContent = `Exported ${rows.length} rows to ${path}`;
+  } catch (e) {
+    statusText.textContent = `Export error: ${e}`;
+  }
 });
 
 // ── Helpers ─────────────────────────────────────────────────────────────

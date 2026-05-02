@@ -3,6 +3,8 @@ use md5::{Digest, Md5};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use tauri::{AppHandle, Emitter};
 use walkdir::WalkDir;
 
 const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "gif", "bmp", "tiff", "tif", "webp"];
@@ -139,19 +141,21 @@ pub struct ScanProgress {
 
 #[tauri::command]
 async fn scan_images(
+    app: AppHandle,
     folder: String,
     recursive: bool,
     min_width: u32,
     min_height: u32,
 ) -> Result<Vec<ImageInfo>, String> {
     tokio::task::spawn_blocking(move || {
-        scan_images_sync(&folder, recursive, min_width, min_height)
+        scan_images_sync(&app, &folder, recursive, min_width, min_height)
     })
     .await
     .map_err(|e| format!("Task join error: {e}"))?
 }
 
 fn scan_images_sync(
+    app: &AppHandle,
     folder: &str,
     recursive: bool,
     min_width: u32,
@@ -192,12 +196,27 @@ fn scan_images_sync(
             .collect()
     };
 
+    let total = image_paths.len();
+    let _ = app.emit("scan_progress", ScanProgress {
+        scanned: 0, total, current_file: format!("Found {total} images..."),
+    });
+
+    let scanned = AtomicUsize::new(0);
+    let app_ref = app.clone();
+
     let results: Vec<Option<ImageInfo>> = image_paths
         .par_iter()
         .map(|path| {
             let img = image::open(path).ok()?;
             let (width, height) = img.dimensions();
             if width < min_width || height < min_height {
+                let done = scanned.fetch_add(1, Ordering::Relaxed) + 1;
+                if done % 5 == 0 || done == total {
+                    let _ = app_ref.emit("scan_progress", ScanProgress {
+                        scanned: done, total,
+                        current_file: path.file_name().unwrap_or_default().to_string_lossy().to_string(),
+                    });
+                }
                 return None;
             }
             let gray = img.to_luma8();
@@ -205,6 +224,14 @@ fn scan_images_sync(
             let file_bytes = std::fs::read(path).ok()?;
             let file_size = file_bytes.len() as u64;
             let md5 = hex::encode(Md5::digest(&file_bytes));
+
+            let done = scanned.fetch_add(1, Ordering::Relaxed) + 1;
+            if done % 5 == 0 || done == total {
+                let _ = app_ref.emit("scan_progress", ScanProgress {
+                    scanned: done, total,
+                    current_file: path.file_name().unwrap_or_default().to_string_lossy().to_string(),
+                });
+            }
 
             Some(ImageInfo {
                 path: path.to_string_lossy().to_string(),
@@ -222,18 +249,20 @@ fn scan_images_sync(
 
 #[tauri::command]
 async fn find_duplicates(
+    app: AppHandle,
     images: Vec<ImageInfo>,
     phash_threshold: u32,
     ssim_threshold: f64,
 ) -> Result<Vec<DuplicateGroup>, String> {
     tokio::task::spawn_blocking(move || {
-        find_duplicates_sync(images, phash_threshold, ssim_threshold)
+        find_duplicates_sync(&app, images, phash_threshold, ssim_threshold)
     })
     .await
     .map_err(|e| format!("Task join error: {e}"))?
 }
 
 fn find_duplicates_sync(
+    app: &AppHandle,
     images: Vec<ImageInfo>,
     phash_threshold: u32,
     ssim_threshold: f64,
@@ -271,6 +300,10 @@ fn find_duplicates_sync(
         }
     }
 
+    let _ = app.emit("dedup_progress", serde_json::json!({
+        "phase": "phash", "done": 0, "total": n, "message": "Comparing pHash values..."
+    }));
+
     let pairs: Vec<(usize, usize)> = (0..n)
         .into_par_iter()
         .flat_map(|i| {
@@ -288,9 +321,26 @@ fn find_duplicates_sync(
         })
         .collect();
 
+    let pair_total = pairs.len();
+    let _ = app.emit("dedup_progress", serde_json::json!({
+        "phase": "ssim", "done": 0, "total": pair_total,
+        "message": format!("Verifying {pair_total} candidate pairs with SSIM...")
+    }));
+
+    let verified_count = AtomicUsize::new(0);
+    let app_ref = app.clone();
+
     let verified: Vec<(usize, usize, f64)> = pairs
         .par_iter()
         .filter_map(|&(i, j)| {
+            let done = verified_count.fetch_add(1, Ordering::Relaxed) + 1;
+            if done % 5 == 0 || done == pair_total {
+                let _ = app_ref.emit("dedup_progress", serde_json::json!({
+                    "phase": "ssim", "done": done, "total": pair_total,
+                    "message": format!("SSIM verification: {done}/{pair_total} pairs...")
+                }));
+            }
+
             if !images[i].md5.is_empty() && images[i].md5 == images[j].md5 {
                 return Some((i, j, 1.0));
             }
@@ -413,6 +463,13 @@ fn send_to_trash(paths: Vec<String>) -> Result<Vec<String>, String> {
     delete_files(paths)
 }
 
+// ── Export CSV ──────────────────────────────────────────────────────────
+
+#[tauri::command]
+async fn export_csv(path: String, csv_content: String) -> Result<(), String> {
+    std::fs::write(&path, csv_content).map_err(|e| format!("Failed to write CSV: {e}"))
+}
+
 // ── App setup ───────────────────────────────────────────────────────────
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -427,6 +484,7 @@ pub fn run() {
             get_image_base64,
             delete_files,
             send_to_trash,
+            export_csv,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
