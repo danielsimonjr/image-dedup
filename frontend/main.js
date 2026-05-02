@@ -144,6 +144,10 @@ function buildRows() {
   rows = [];
   groups.forEach((group, gi) => {
     const groupNum = gi + 1;
+    // #6: Rust + Python set "high"|"low". `serde(default)` falls back to
+    // "high" for older builds. Treat any non-"low" value as high.
+    const confidence = group.confidence === "low" ? "low" : "high";
+    const lowConfidence = confidence === "low";
 
     // Keeper row
     rows.push({
@@ -158,6 +162,8 @@ function buildRows() {
       checked: false,
       isKeeper: true,
       groupIndex: gi,
+      confidence,
+      lowConfidence,
     });
 
     // Duplicate rows
@@ -173,9 +179,13 @@ function buildRows() {
         height: dup.height,
         fileSize: dup.file_size,
         ssim,
-        checked: true,  // duplicates checked by default
+        // Low-confidence duplicates are NOT pre-checked: user must
+        // explicitly opt in per-image. High-confidence behavior unchanged.
+        checked: !lowConfidence,
         isKeeper: false,
         groupIndex: gi,
+        confidence,
+        lowConfidence,
       });
     });
   });
@@ -192,6 +202,7 @@ function renderTable() {
     const tr = document.createElement("tr");
     tr.className = row.isKeeper ? "row-keeper" : "row-duplicate";
     if (row.groupStart) tr.classList.add("group-start");
+    if (row.lowConfidence) tr.classList.add("low-confidence");
     if (rows.indexOf(row) === selectedRowIdx) tr.classList.add("selected");
 
     // Checkbox
@@ -207,9 +218,19 @@ function renderTable() {
     tdCheck.appendChild(cb);
     tr.appendChild(tdCheck);
 
-    // Group
+    // Group (with low-confidence badge on first row of each group)
     const tdGroup = document.createElement("td");
     tdGroup.textContent = row.groupNum;
+    if (row.lowConfidence && row.groupStart) {
+      const badge = document.createElement("span");
+      badge.className = "low-confidence-badge";
+      badge.textContent = "⚠ review";
+      badge.title =
+        "Low confidence — pHash + SSIM matched but dHash disagreed. " +
+        "Compare images manually before deleting.";
+      tdGroup.appendChild(document.createTextNode(" "));
+      tdGroup.appendChild(badge);
+    }
     tr.appendChild(tdGroup);
 
     // Action (clickable to toggle)
@@ -357,7 +378,12 @@ function getFilteredRows() {
 
 selectAll.addEventListener("change", () => {
   const checked = selectAll.checked;
-  getFilteredRows().forEach((r) => { r.checked = checked; });
+  // Low-confidence DELETE rows are excluded from bulk-toggle: users must
+  // tick them individually after manual review.
+  getFilteredRows().forEach((r) => {
+    if (checked && r.lowConfidence && r.action === "DELETE") return;
+    r.checked = checked;
+  });
   renderTable();
   updateStats();
 });
@@ -436,8 +462,12 @@ btnDeleteAll.addEventListener("click", async () => {
   }
 
   const totalSize = toDelete.reduce((s, r) => s + r.fileSize, 0);
+  const lowCount = toDelete.filter((r) => r.lowConfidence).length;
+  const lowWarning = lowCount > 0
+    ? `\n\n⚠ ${lowCount} of these are LOW-CONFIDENCE matches — review manually if unsure.`
+    : "";
   const ok = await confirm(
-    `Send ${toDelete.length} duplicate files (${formatSize(totalSize)}) to trash?`,
+    `Send ${toDelete.length} duplicate files (${formatSize(totalSize)}) to trash?${lowWarning}`,
     { title: "Confirm Deletion", kind: "warning" }
   );
 

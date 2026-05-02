@@ -395,6 +395,36 @@ tbody tr.group-start td {
   border-top: 2px solid #d0d0d0;
 }
 
+/* ── Low-confidence groups (#6) ─────────────────
+ * pHash + SSIM matched but dHash disagreed, OR SSIM is in the 0.90-0.98
+ * uncertain band. User must opt in per-image; never auto-bulk-deleted. */
+tbody tr.low-confidence td {
+  background: #fffbeb;
+}
+
+tbody tr.low-confidence:hover td {
+  background: #fef3c7;
+}
+
+tbody tr.low-confidence.group-start td:first-of-type,
+tbody tr.low-confidence.group-start td:nth-child(2) {
+  border-left: 3px solid #f59e0b;
+}
+
+.low-confidence-badge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 10px;
+  background: #f59e0b;
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+  vertical-align: middle;
+  white-space: nowrap;
+  cursor: help;
+}
+
 /* ── Compare selection highlight ─────────────── */
 tbody tr.compare-selected {
   background: #fef3c7 !important;

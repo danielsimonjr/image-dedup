@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **Surface low-confidence flag in renderer** (`frontend/main.js`,
+  `frontend/style.css`). The pHash/SSIM/dHash hardening landed in
+  `60eebc3` already produced a `confidence: "high"|"low"` field on
+  each `DuplicateGroup`, but the table didn't read it. Low-confidence
+  rows now render with an amber border, an `⚠ review` badge on the
+  group's first row, are NOT pre-checked (user must opt in per-image),
+  and the bulk-delete confirm dialog adds a warning line listing how
+  many low-confidence matches are queued. Backwards-compatible: older
+  builds that don't emit `confidence` (still possible if running
+  against an older backend) fall back to "high" via `serde(default)`,
+  preserving prior behavior.
+
 ### Security
 
 - **CRITICAL** (`#1`, `#2`, `#3`) — Renderer-supplied paths are no longer
