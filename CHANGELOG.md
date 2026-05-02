@@ -17,9 +17,13 @@ All notable changes to this project will be documented in this file.
   image allow-list. CSP `script-src` no longer includes `'unsafe-inline'`
   (`style-src` retains it for the two unavoidable inline `style="width:50px"`
   attributes).
-- **IMPORTANT** (`#4`) — `fs:allow-read` removed from baseline capabilities;
-  the renderer now requests fs scope at runtime via the `fs` plugin scope API
-  after the user picks a folder, scoped to that folder only.
+- **IMPORTANT** (`#4`) — `fs:allow-read` (and unused `fs:default`) removed
+  from `capabilities/default.json`. The renderer never directly invoked the
+  fs plugin — all file reads go through our own `get_image_base64` Rust
+  command, which now enforces the path allow-list — so removing the
+  capability outright is safer than the originally proposed runtime scope.
+  Any future frontend that needs raw fs access must add a fresh capability
+  with a runtime-set scope limited to the user-chosen folder.
 - **IMPORTANT** (`#5`) — Decompression-bomb DoS fixed on both Rust and Python
   sides. Rust now calls `image::ImageReader::open(path)?.into_dimensions()?`
   before decoding, rejecting any image with `w * h > 50_000_000`. Python sets

@@ -10,8 +10,6 @@
     "dialog:allow-open",
     "dialog:allow-confirm",
     "dialog:allow-save",
-    "fs:default",
-    "fs:allow-read",
     "shell:default"
   ]
 }
