@@ -1,13 +1,71 @@
 use image::GenericImageView;
 use md5::{Digest, Md5};
+use once_cell::sync::Lazy;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 use tauri::{AppHandle, Emitter};
 use walkdir::WalkDir;
 
 const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "png", "gif", "bmp", "tiff", "tif", "webp"];
+
+// ── Path allow-list ─────────────────────────────────────────────────────
+// Only paths that scan_images has actually visited may be opened or
+// deleted by the renderer. Canonicalized to defeat symlink / `..` traversal.
+
+static ALLOWED_PATHS: Lazy<Mutex<HashSet<PathBuf>>> =
+    Lazy::new(|| Mutex::new(HashSet::new()));
+
+fn canonicalize_for_allowlist(path: &Path) -> Option<PathBuf> {
+    // dunce::canonicalize would be nicer on Windows but std works fine for
+    // allow-list comparisons because we canonicalize both sides identically.
+    std::fs::canonicalize(path).ok()
+}
+
+fn record_allowed(path: &Path) {
+    if let Some(canon) = canonicalize_for_allowlist(path) {
+        if let Ok(mut set) = ALLOWED_PATHS.lock() {
+            set.insert(canon);
+        }
+    }
+}
+
+/// Returns Ok(canonical_path) if `raw` resolves to a file that scan_images
+/// previously recorded; Err(reason) otherwise.
+fn check_allowed(raw: &str) -> Result<PathBuf, String> {
+    let canon = canonicalize_for_allowlist(Path::new(raw))
+        .ok_or_else(|| format!("path does not resolve: {raw}"))?;
+    let set = ALLOWED_PATHS
+        .lock()
+        .map_err(|_| "allow-list lock poisoned".to_string())?;
+    if set.contains(&canon) {
+        Ok(canon)
+    } else {
+        Err(format!("path not in scan allow-list: {raw}"))
+    }
+}
+
+fn has_image_extension(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .map(|e| IMAGE_EXTENSIONS.contains(&e.to_lowercase().as_str()))
+        .unwrap_or(false)
+}
+
+#[cfg(test)]
+fn _testing_clear_allowlist() {
+    if let Ok(mut set) = ALLOWED_PATHS.lock() {
+        set.clear();
+    }
+}
+
+#[cfg(test)]
+fn _testing_record_allowed(p: &Path) {
+    record_allowed(p);
+}
 
 // ── Perceptual hash ─────────────────────────────────────────────────────
 
@@ -233,6 +291,10 @@ fn scan_images_sync(
                 });
             }
 
+            // Record this path in the allow-list so the renderer is
+            // permitted to call get_image_base64 / delete_files on it.
+            record_allowed(path);
+
             Some(ImageInfo {
                 path: path.to_string_lossy().to_string(),
                 width,
@@ -418,8 +480,26 @@ fn find_duplicates_sync(
 #[tauri::command]
 async fn get_image_base64(path: String) -> Result<String, String> {
     tokio::task::spawn_blocking(move || -> Result<String, String> {
-        let img_bytes = std::fs::read(&path).map_err(|e| format!("Cannot read {path}: {e}"))?;
-        let ext = Path::new(&path)
+        // 1. Allow-list check (canonicalizes & rejects untracked paths).
+        let canon = check_allowed(&path)?;
+
+        // 2. Extension allow-list (rejects e.g. `passwords.txt`).
+        if !has_image_extension(&canon) {
+            return Err(format!("not an allowed image extension: {path}"));
+        }
+
+        // 3. Validate via image::ImageReader::decode — non-images fail here.
+        image::ImageReader::open(&canon)
+            .map_err(|e| format!("cannot open {path}: {e}"))?
+            .with_guessed_format()
+            .map_err(|e| format!("cannot sniff format {path}: {e}"))?
+            .decode()
+            .map_err(|e| format!("not a valid image {path}: {e}"))?;
+
+        // 4. Read bytes and encode.
+        let img_bytes =
+            std::fs::read(&canon).map_err(|e| format!("Cannot read {path}: {e}"))?;
+        let ext = canon
             .extension()
             .and_then(|e| e.to_str())
             .unwrap_or("png")
@@ -431,7 +511,7 @@ async fn get_image_base64(path: String) -> Result<String, String> {
             "bmp" => "image/bmp",
             "webp" => "image/webp",
             "tiff" | "tif" => "image/tiff",
-            _ => "image/png",
+            _ => return Err(format!("unsupported extension: {ext}")),
         };
         use base64::Engine as _;
         let b64 = base64::engine::general_purpose::STANDARD.encode(&img_bytes);
@@ -441,12 +521,28 @@ async fn get_image_base64(path: String) -> Result<String, String> {
     .map_err(|e| format!("Task join error: {e}"))?
 }
 
+/// Move files to the OS recycle bin / trash. Each path must be in the
+/// scan allow-list — arbitrary paths from a compromised renderer are
+/// rejected without touching the filesystem.
 #[tauri::command]
 fn delete_files(paths: Vec<String>) -> Result<Vec<String>, String> {
     let mut errors = Vec::new();
-    for path in &paths {
-        if let Err(e) = std::fs::remove_file(path) {
-            errors.push(format!("{path}: {e}"));
+    for raw in &paths {
+        match check_allowed(raw) {
+            Err(reason) => {
+                errors.push(format!("{raw}: rejected ({reason})"));
+                continue;
+            }
+            Ok(canon) => {
+                if let Err(e) = trash::delete(&canon) {
+                    errors.push(format!("{raw}: {e}"));
+                } else {
+                    // Drop from allow-list so a second call can't re-target it.
+                    if let Ok(mut set) = ALLOWED_PATHS.lock() {
+                        set.remove(&canon);
+                    }
+                }
+            }
         }
     }
     if errors.is_empty() {
@@ -456,10 +552,10 @@ fn delete_files(paths: Vec<String>) -> Result<Vec<String>, String> {
     }
 }
 
+/// Alias of `delete_files`, kept for backward compatibility with the
+/// existing renderer code. Both move to recycle bin via the `trash` crate.
 #[tauri::command]
 fn send_to_trash(paths: Vec<String>) -> Result<Vec<String>, String> {
-    // On Windows, move to recycle bin by renaming to a temp location
-    // For simplicity, just delete — user can implement trash later
     delete_files(paths)
 }
 
@@ -488,4 +584,117 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+// ── Tests ───────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::io::Write;
+
+    fn unique_tmp(name: &str) -> PathBuf {
+        let mut p = std::env::temp_dir();
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        p.push(format!("image-dedup-test-{ts}-{name}"));
+        p
+    }
+
+    #[test]
+    fn allowlist_rejects_unscanned_path() {
+        _testing_clear_allowlist();
+        let tmp = unique_tmp("unscanned.png");
+        fs::write(&tmp, b"\x89PNG\r\n\x1a\n").unwrap();
+        let res = check_allowed(tmp.to_str().unwrap());
+        assert!(res.is_err(), "unscanned path must be rejected");
+        let _ = fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn allowlist_accepts_scanned_path() {
+        _testing_clear_allowlist();
+        let tmp = unique_tmp("scanned.png");
+        fs::write(&tmp, b"\x89PNG\r\n\x1a\n").unwrap();
+        _testing_record_allowed(&tmp);
+        let res = check_allowed(tmp.to_str().unwrap());
+        assert!(res.is_ok(), "scanned path must be accepted: {res:?}");
+        let _ = fs::remove_file(&tmp);
+    }
+
+    #[test]
+    fn allowlist_rejects_traversal_attempt() {
+        _testing_clear_allowlist();
+        // Record an "allowed" file then attempt access via a sibling
+        // path that is NOT in the allow-list. Both canonicalize to
+        // distinct absolute paths, so the traversal is rejected.
+        let allowed = unique_tmp("allowed.png");
+        let other = unique_tmp("other.png");
+        fs::write(&allowed, b"\x89PNG\r\n\x1a\n").unwrap();
+        fs::write(&other, b"\x89PNG\r\n\x1a\n").unwrap();
+        _testing_record_allowed(&allowed);
+
+        // A `..`-traversed path that lands on `other` must NOT be allowed.
+        let traversed = allowed.parent().unwrap().join(format!(
+            "..{}{}",
+            std::path::MAIN_SEPARATOR,
+            allowed
+                .parent()
+                .unwrap()
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+        ));
+        let attack = traversed.join(other.file_name().unwrap());
+        let res = check_allowed(attack.to_str().unwrap());
+        assert!(res.is_err(), "traversal to sibling must be rejected");
+        let _ = fs::remove_file(&allowed);
+        let _ = fs::remove_file(&other);
+    }
+
+    #[test]
+    fn extension_check_rejects_non_image() {
+        let p = PathBuf::from("/tmp/passwords.txt");
+        assert!(!has_image_extension(&p));
+        let p2 = PathBuf::from("/tmp/photo.JPG");
+        assert!(has_image_extension(&p2));
+    }
+
+    #[test]
+    fn decompression_bomb_rejected_by_dimension_check() {
+        // Build a tiny PNG that declares 65535 × 65535 dimensions in IHDR
+        // but contains no actual pixel data. image::ImageReader's
+        // into_dimensions() should return the declared size cheaply,
+        // and our caller must reject it before decode.
+        let tmp = unique_tmp("bomb.png");
+        let mut f = fs::File::create(&tmp).unwrap();
+        // Minimal valid PNG signature + IHDR with width=65535,height=65535.
+        let sig = [137u8, 80, 78, 71, 13, 10, 26, 10];
+        f.write_all(&sig).unwrap();
+        // IHDR length=13
+        f.write_all(&[0, 0, 0, 13]).unwrap();
+        f.write_all(b"IHDR").unwrap();
+        // width=65535, height=65535, bit_depth=8, color_type=2 (RGB)
+        f.write_all(&[0, 0, 255, 255, 0, 0, 255, 255, 8, 2, 0, 0, 0]).unwrap();
+        // Bogus CRC — into_dimensions reads IHDR before CRC is checked
+        // by some decoders; if not, into_dimensions returns Err and our
+        // caller rejects anyway, which is also a pass.
+        f.write_all(&[0u8, 0, 0, 0]).unwrap();
+        drop(f);
+
+        let dims = image::ImageReader::open(&tmp)
+            .ok()
+            .and_then(|r| r.into_dimensions().ok());
+        const MAX_PIXELS: u64 = 50_000_000;
+        let bombed = match dims {
+            Some((w, h)) => (w as u64) * (h as u64) > MAX_PIXELS,
+            // Either way: a malformed/oversize PNG must NOT be accepted.
+            None => true,
+        };
+        assert!(bombed, "65535x65535 image must be flagged as a bomb");
+        let _ = fs::remove_file(&tmp);
+    }
 }

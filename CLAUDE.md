@@ -71,4 +71,5 @@ DuplicateGroup { keeper: ImageInfo, duplicates: Vec<ImageInfo>, scores: Vec<(Str
 - **Two separate Rust crates with duplicated algorithm code:** `src/lib.rs` (PyO3) and `src-tauri/src/lib.rs` (Tauri) implement the same pHash/SSIM/Union-Find logic independently. Changes to the algorithm must be mirrored manually.
 - **Frontend uses global Tauri:** `withGlobalTauri: true` in tauri.conf.json exposes `window.__TAURI__` — JS calls use `window.__TAURI__.core.invoke()`, not an npm import.
 - **Lock files are gitignored:** Both `package-lock.json` and `Cargo.lock` are in `.gitignore`.
-- **CSP allows `unsafe-inline`:** The security policy permits inline scripts and styles — be aware when adding new script/style sources.
+- **CSP `script-src` is `'self'` only:** Inline `<script>` and `onclick=` handlers are blocked. Wire events from `main.js`. (`style-src` still allows `'unsafe-inline'` because of two `style="width:50px"` attrs in `index.html`.)
+- **Path allow-list:** `delete_files` and `get_image_base64` reject any path that wasn't previously seen by `scan_images`. Don't introduce new IPC commands that take raw paths from the renderer without going through `check_allowed`.
