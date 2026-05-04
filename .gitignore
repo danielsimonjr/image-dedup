@@ -38,3 +38,6 @@ app-icon.png
 
 # Test data
 test_images/
+
+# Tauri-generated schemas
+/src-tauri/gen/
