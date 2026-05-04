@@ -41,3 +41,12 @@ test_images/
 
 # Tauri-generated schemas
 /src-tauri/gen/
+
+# Tauri auto-generated platform icons (project ships desktop only)
+# `npm run tauri icon` regenerates these from src-tauri/icons/icon.png
+/src-tauri/icons/64x64.png
+/src-tauri/icons/icon.icns
+/src-tauri/icons/Square*Logo.png
+/src-tauri/icons/StoreLogo.png
+/src-tauri/icons/android/
+/src-tauri/icons/ios/
