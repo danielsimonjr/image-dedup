@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Security
+- Bumped `pyo3` `0.25 → 0.29` in the legacy `dedup_core` Python-extension crate, resolving a HIGH and a MEDIUM advisory against pyo3 `< 0.29`. The bindings (`src/lib.rs`) compile unchanged under 0.29 — `cargo build --release` is clean (two forward-compat `FromPyObject` deprecation notices only). The `dedup_core` module is consumed by `dedup_gui.py`.
+
 ## [1.1.0] - 2026-05-01
 
 ### Added
