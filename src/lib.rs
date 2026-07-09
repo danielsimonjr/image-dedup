@@ -131,7 +131,10 @@ fn compute_ssim_internal(
 }
 
 /// Information about a scanned image, returned to Python.
-#[pyclass]
+// `from_py_object`: ImageInfo is extracted back from Python as `Vec<ImageInfo>`
+// in `find_duplicates`, so it opts into the FromPyObject derive (pyo3 0.29 made
+// this explicit instead of automatic for Clone-able pyclasses).
+#[pyclass(from_py_object)]
 #[derive(Clone)]
 struct ImageInfo {
     #[pyo3(get)]
@@ -164,7 +167,9 @@ impl ImageInfo {
 }
 
 /// A group of duplicate images. The keeper is the highest-resolution version.
-#[pyclass]
+// `skip_from_py_object`: DuplicateGroup is only ever returned to Python, never
+// extracted from it, so it does not need the FromPyObject impl (pyo3 0.29).
+#[pyclass(skip_from_py_object)]
 #[derive(Clone)]
 struct DuplicateGroup {
     #[pyo3(get)]

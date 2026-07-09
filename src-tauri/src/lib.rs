@@ -45,8 +45,7 @@ fn stream_md5(path: &Path) -> std::io::Result<(String, u64)> {
 // Only paths that scan_images has actually visited may be opened or
 // deleted by the renderer. Canonicalized to defeat symlink / `..` traversal.
 
-static ALLOWED_PATHS: Lazy<Mutex<HashSet<PathBuf>>> =
-    Lazy::new(|| Mutex::new(HashSet::new()));
+static ALLOWED_PATHS: Lazy<Mutex<HashSet<PathBuf>>> = Lazy::new(|| Mutex::new(HashSet::new()));
 
 fn canonicalize_for_allowlist(path: &Path) -> Option<PathBuf> {
     // dunce::canonicalize would be nicer on Windows but std works fine for
@@ -257,7 +256,9 @@ pub struct DuplicateGroup {
     pub confidence: String,
 }
 
-fn default_confidence() -> String { "high".to_string() }
+fn default_confidence() -> String {
+    "high".to_string()
+}
 
 #[derive(Clone, Serialize)]
 pub struct ScanProgress {
@@ -326,9 +327,14 @@ fn scan_images_sync(
     };
 
     let total = image_paths.len();
-    let _ = app.emit("scan_progress", ScanProgress {
-        scanned: 0, total, current_file: format!("Found {total} images..."),
-    });
+    let _ = app.emit(
+        "scan_progress",
+        ScanProgress {
+            scanned: 0,
+            total,
+            current_file: format!("Found {total} images..."),
+        },
+    );
 
     let scanned = AtomicUsize::new(0);
     let app_ref = app.clone();
@@ -346,12 +352,18 @@ fn scan_images_sync(
             let (peek_w, peek_h) = reader.into_dimensions().ok()?;
             if (peek_w as u64) * (peek_h as u64) > MAX_DECODE_PIXELS {
                 let done = scanned.fetch_add(1, Ordering::Relaxed) + 1;
-                if done % 5 == 0 || done == total {
-                    let _ = app_ref.emit("scan_progress", ScanProgress {
-                        scanned: done, total,
-                        current_file: format!("skipped (too large): {}",
-                            path.file_name().unwrap_or_default().to_string_lossy()),
-                    });
+                if done.is_multiple_of(5) || done == total {
+                    let _ = app_ref.emit(
+                        "scan_progress",
+                        ScanProgress {
+                            scanned: done,
+                            total,
+                            current_file: format!(
+                                "skipped (too large): {}",
+                                path.file_name().unwrap_or_default().to_string_lossy()
+                            ),
+                        },
+                    );
                 }
                 return None;
             }
@@ -360,11 +372,19 @@ fn scan_images_sync(
             let (width, height) = img.dimensions();
             if width < min_width || height < min_height {
                 let done = scanned.fetch_add(1, Ordering::Relaxed) + 1;
-                if done % 5 == 0 || done == total {
-                    let _ = app_ref.emit("scan_progress", ScanProgress {
-                        scanned: done, total,
-                        current_file: path.file_name().unwrap_or_default().to_string_lossy().to_string(),
-                    });
+                if done.is_multiple_of(5) || done == total {
+                    let _ = app_ref.emit(
+                        "scan_progress",
+                        ScanProgress {
+                            scanned: done,
+                            total,
+                            current_file: path
+                                .file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                                .to_string(),
+                        },
+                    );
                 }
                 return None;
             }
@@ -377,11 +397,19 @@ fn scan_images_sync(
             let (md5, file_size) = stream_md5(path).ok()?;
 
             let done = scanned.fetch_add(1, Ordering::Relaxed) + 1;
-            if done % 5 == 0 || done == total {
-                let _ = app_ref.emit("scan_progress", ScanProgress {
-                    scanned: done, total,
-                    current_file: path.file_name().unwrap_or_default().to_string_lossy().to_string(),
-                });
+            if done.is_multiple_of(5) || done == total {
+                let _ = app_ref.emit(
+                    "scan_progress",
+                    ScanProgress {
+                        scanned: done,
+                        total,
+                        current_file: path
+                            .file_name()
+                            .unwrap_or_default()
+                            .to_string_lossy()
+                            .to_string(),
+                    },
+                );
             }
 
             // Record this path in the allow-list so the renderer is
@@ -456,9 +484,12 @@ fn find_duplicates_sync(
         }
     }
 
-    let _ = app.emit("dedup_progress", serde_json::json!({
-        "phase": "phash", "done": 0, "total": n, "message": "Comparing pHash values..."
-    }));
+    let _ = app.emit(
+        "dedup_progress",
+        serde_json::json!({
+            "phase": "phash", "done": 0, "total": n, "message": "Comparing pHash values..."
+        }),
+    );
 
     let pairs: Vec<(usize, usize)> = (0..n)
         .into_par_iter()
@@ -478,10 +509,13 @@ fn find_duplicates_sync(
         .collect();
 
     let pair_total = pairs.len();
-    let _ = app.emit("dedup_progress", serde_json::json!({
-        "phase": "ssim", "done": 0, "total": pair_total,
-        "message": format!("Verifying {pair_total} candidate pairs with SSIM...")
-    }));
+    let _ = app.emit(
+        "dedup_progress",
+        serde_json::json!({
+            "phase": "ssim", "done": 0, "total": pair_total,
+            "message": format!("Verifying {pair_total} candidate pairs with SSIM...")
+        }),
+    );
 
     let verified_count = AtomicUsize::new(0);
     let app_ref = app.clone();
@@ -493,11 +527,14 @@ fn find_duplicates_sync(
         .par_iter()
         .filter_map(|&(i, j)| {
             let done = verified_count.fetch_add(1, Ordering::Relaxed) + 1;
-            if done % 5 == 0 || done == pair_total {
-                let _ = app_ref.emit("dedup_progress", serde_json::json!({
-                    "phase": "ssim", "done": done, "total": pair_total,
-                    "message": format!("SSIM verification: {done}/{pair_total} pairs...")
-                }));
+            if done.is_multiple_of(5) || done == pair_total {
+                let _ = app_ref.emit(
+                    "dedup_progress",
+                    serde_json::json!({
+                        "phase": "ssim", "done": done, "total": pair_total,
+                        "message": format!("SSIM verification: {done}/{pair_total} pairs...")
+                    }),
+                );
             }
 
             if !images[i].md5.is_empty() && images[i].md5 == images[j].md5 {
@@ -610,8 +647,7 @@ async fn get_image_base64(path: String) -> Result<String, String> {
             .map_err(|e| format!("not a valid image {path}: {e}"))?;
 
         // 4. Read bytes and encode.
-        let img_bytes =
-            std::fs::read(&canon).map_err(|e| format!("Cannot read {path}: {e}"))?;
+        let img_bytes = std::fs::read(&canon).map_err(|e| format!("Cannot read {path}: {e}"))?;
         let ext = canon
             .extension()
             .and_then(|e| e.to_str())
@@ -791,7 +827,8 @@ mod tests {
         f.write_all(&[0, 0, 0, 13]).unwrap();
         f.write_all(b"IHDR").unwrap();
         // width=65535, height=65535, bit_depth=8, color_type=2 (RGB)
-        f.write_all(&[0, 0, 255, 255, 0, 0, 255, 255, 8, 2, 0, 0, 0]).unwrap();
+        f.write_all(&[0, 0, 255, 255, 0, 0, 255, 255, 8, 2, 0, 0, 0])
+            .unwrap();
         // Bogus CRC — into_dimensions reads IHDR before CRC is checked
         // by some decoders; if not, into_dimensions returns Err and our
         // caller rejects anyway, which is also a pass.

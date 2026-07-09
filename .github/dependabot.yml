@@ -1,0 +1,35 @@
+version: 2
+updates:
+  # Grouped so a bump wave arrives as ONE PR per ecosystem (not N conflicting ones).
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      python:
+        patterns: ["*"]
+    commit-message:
+      prefix: chore
+    labels: [dependencies, python]
+
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      rust:
+        patterns: ["*"]
+    commit-message:
+      prefix: chore
+    labels: [dependencies, rust]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]
+    commit-message:
+      prefix: ci
+    labels: [dependencies, github-actions]
