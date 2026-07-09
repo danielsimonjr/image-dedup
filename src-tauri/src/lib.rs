@@ -743,6 +743,13 @@ mod tests {
     use std::fs;
     use std::io::Write;
 
+    // The allowlist tests share the process-global ALLOWED_PATHS and each calls
+    // _testing_clear_allowlist(); cargo runs tests in parallel threads, so without
+    // serialization one test's clear() can wipe a path another test just recorded
+    // between its record and check (flaky). Hold this lock for the whole body of
+    // each allowlist test so they run one at a time.
+    static ALLOWLIST_LOCK: Mutex<()> = Mutex::new(());
+
     fn unique_tmp(name: &str) -> PathBuf {
         let mut p = std::env::temp_dir();
         let ts = std::time::SystemTime::now()
@@ -755,6 +762,7 @@ mod tests {
 
     #[test]
     fn allowlist_rejects_unscanned_path() {
+        let _guard = ALLOWLIST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         _testing_clear_allowlist();
         let tmp = unique_tmp("unscanned.png");
         fs::write(&tmp, b"\x89PNG\r\n\x1a\n").unwrap();
@@ -765,6 +773,7 @@ mod tests {
 
     #[test]
     fn allowlist_accepts_scanned_path() {
+        let _guard = ALLOWLIST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         _testing_clear_allowlist();
         let tmp = unique_tmp("scanned.png");
         fs::write(&tmp, b"\x89PNG\r\n\x1a\n").unwrap();
@@ -776,6 +785,7 @@ mod tests {
 
     #[test]
     fn allowlist_rejects_traversal_attempt() {
+        let _guard = ALLOWLIST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         _testing_clear_allowlist();
         // Record an "allowed" file then attempt access via a sibling
         // path that is NOT in the allow-list. Both canonicalize to
