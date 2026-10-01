@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- `cli/`: a new pure-Rust crate `imgdedup` (library and binary) with no tauri, pyo3 or tokio dependency. The binary finds duplicate images, writes a tab-separated report and sends the DELETE copies to the Recycle Bin with `--apply` (dry run by default). Options: `--flat`, `--min-width`, `--min-height`, `--phash-threshold`, `--ssim-threshold`, `--include-low-confidence`, `--report`, `--threads`. Low-confidence copies are held as REVIEW. Before each delete the tool checks that the copy and its keeper keep the scanned size and modified time. Symbolic links and junctions are never followed. Exit code 3 means at least one delete failed.
+- The `cli/` crate ports the `src-tauri/src/lib.rs` algorithm and is now the reference implementation. Pointing `src-tauri` at it, to end the duplicated code, is a follow-up.
+- Tests for the new crate: hashes, SSIM, confidence rule, Union-Find, keeper rule, 50-megapixel guard, scan, report, apply with an injected delete function, the binary, and a copy of `test_images/`.
+
 ### Security
 - Bumped `pyo3` `0.25 → 0.29` in the legacy `dedup_core` Python-extension crate, resolving a HIGH and a MEDIUM advisory against pyo3 `< 0.29`. The bindings (`src/lib.rs`) compile unchanged under 0.29 — `cargo build --release` is clean (two forward-compat `FromPyObject` deprecation notices only). The `dedup_core` module is consumed by `dedup_gui.py`.
 

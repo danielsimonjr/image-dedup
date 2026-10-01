@@ -26,11 +26,24 @@ maturin develop          # Build Rust extension (dedup_core)
 python dedup_gui.py      # Run Tkinter GUI
 ```
 
-### No test suite exists — manual testing uses `test_images/` directory.
+### Command-line tool (`cli/`)
+```bash
+cd cli
+cargo test                                   # unit, binary and test_images/ tests
+cargo clippy --all-targets -- -D warnings
+cargo build --release                        # cli/target/release/imgdedup
+```
+The GUI crates have no automated Rust tests of the algorithm. The `cli/` tests are the reference tests. Manual GUI testing uses the `test_images/` directory.
 
 ## Architecture
 
-The project has two parallel GUI systems sharing the same core algorithm:
+The project has three front ends. The `cli/` crate is the reference implementation of the core algorithm:
+
+### Command-line tool (reference implementation)
+- **Crate:** `cli/` — package `imgdedup`, library `cli/src/lib.rs` plus binary `cli/src/main.rs`. Pure Rust: no tauri, pyo3 or tokio.
+- **Library:** scan, pHash, dHash, SSIM, confidence rule, Union-Find, keeper rule, report and `apply` (the delete function is injected).
+- **Binary:** dry run by default; `--apply` sends DELETE copies to the Recycle Bin (`trash` crate). See the README for options and exit codes.
+- **Follow-up:** point `src-tauri` at this crate to end the duplication.
 
 ### Tauri v2 (current)
 - **Backend:** `src-tauri/src/lib.rs` — Rust, exposes Tauri commands via `#[tauri::command]`
@@ -42,7 +55,7 @@ The project has two parallel GUI systems sharing the same core algorithm:
 - **Rust extension:** `src/lib.rs` — PyO3 bindings, built via maturin
 - **Python fallback:** `dedup_engine.py` — uses imagehash + scikit-image
 
-### Core Algorithm (in both `src-tauri/src/lib.rs` and `src/lib.rs`)
+### Core Algorithm (reference: `cli/src/lib.rs`; copies in `src-tauri/src/lib.rs` and `src/lib.rs`)
 1. **pHash:** Resize to 32x32 grayscale → 2D DCT → top-left 8x8 coefficients → 64-bit hash. Hamming distance ≤ threshold = candidate pair.
 2. **SSIM:** Resize candidates to 256x256 → compute structural similarity score. Score ≥ threshold = confirmed duplicate.
 3. **Grouping:** Union-Find to cluster related images. Keeper = highest resolution, tie-break by file size.
@@ -68,7 +81,9 @@ DuplicateGroup { keeper: ImageInfo, duplicates: Vec<ImageInfo>, scores: Vec<(Str
 - Root `Cargo.toml` builds the PyO3 extension (`cdylib`); `src-tauri/Cargo.toml` builds the Tauri app
 
 ## Gotchas
-- **Two separate Rust crates with duplicated algorithm code:** `src/lib.rs` (PyO3) and `src-tauri/src/lib.rs` (Tauri) implement the same pHash/SSIM/Union-Find logic independently. Changes to the algorithm must be mirrored manually.
+- **Three Rust crates with duplicated algorithm code:** `cli/src/lib.rs` (the reference implementation), `src/lib.rs` (PyO3) and `src-tauri/src/lib.rs` (Tauri) implement the same pHash/SSIM/Union-Find logic independently. Change the algorithm in `cli/` first, then mirror the change by hand in the other two. The planned fix is to make `src-tauri` depend on `cli/` and delete its copy.
+- **The CLI differs from the other copies in small ways:** it ties the keeper rule to the path as a final tie-break (stable output), skips symbolic links and junctions in flat mode, and computes the pHash with a cosine table (same values, faster).
+- **`cli/` keeps its own `.gitignore`:** the root `.gitignore` anchors `/target` to the repository root, so `cli/target` needs the entry in `cli/.gitignore`.
 - **Frontend uses global Tauri:** `withGlobalTauri: true` in tauri.conf.json exposes `window.__TAURI__` — JS calls use `window.__TAURI__.core.invoke()`, not an npm import.
 - **Lock files are gitignored:** Both `package-lock.json` and `Cargo.lock` are in `.gitignore`.
 - **CSP `script-src` is `'self'` only:** Inline `<script>` and `onclick=` handlers are blocked. Wire events from `main.js`. (`style-src` still allows `'unsafe-inline'` because of two `style="width:50px"` attrs in `index.html`.)
