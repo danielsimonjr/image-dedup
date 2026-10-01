@@ -1,7 +1,6 @@
 //! Duplicate-image engine for the `imgdedup` command-line tool.
 //!
-//! The algorithm is a port of the Tauri backend (`src-tauri/src/lib.rs`),
-//! without tauri, pyo3 or tokio:
+//! The pipeline has these steps:
 //!
 //! 1. Scan: peek at the declared size (decompression-bomb guard), decode,
 //!    compute pHash, dHash and a streaming MD5.

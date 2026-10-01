@@ -10,9 +10,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 fn fixture_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("test_images")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("test_images")
 }
 
 /// (file, width, height, bytes) as measured from the files.
