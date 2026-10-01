@@ -39,5 +39,6 @@ The package `imgdedup` has a library (`src/lib.rs`) and a binary (`src/main.rs`)
 ## Gotchas
 - **Recycle Bin code is Windows-only:** `src/recycle_bin.rs` uses `IFileOperation`. The `recycle` tests run on Windows only, so CI uses `windows-latest`.
 - **`test_images/` is gitignored but tracked:** the fixture files were added with `git add -f`. Add a new fixture with `git add -f`.
-- **Lock file is gitignored:** `Cargo.lock` is in `.gitignore`.
+- **`Cargo.lock` is tracked:** CI runs clippy and the tests with `--locked`. Commit the lockfile with every dependency change.
+- **`windows` and `windows-core` move together:** `#[windows::core::implement]` expands to `::windows_core` paths, so `windows-core` is a direct dependency. Its version must equal the `windows-core` that `windows` uses. Dependabot ignores `windows-core`; bump the two crates together by hand.
 - **Never run `--apply` on a real folder in tests:** tests use `test_images/` copies and temp folders only.

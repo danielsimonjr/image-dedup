@@ -24,6 +24,7 @@ All notable changes to this project will be documented in this file.
 ### CI
 - One `cli` job on `windows-latest`: `cargo fmt --check`, `cargo clippy --locked --all-targets -D warnings` and `cargo test --locked`.
 - `Cargo.lock` is tracked. A binary crate builds the same dependency versions in CI and on every machine, and Dependabot's `cargo` updates bump the lockfile. `--locked` fails the build when `Cargo.lock` does not match `Cargo.toml`.
+- Dependabot ignores `windows-core`. `#[windows::core::implement]` expands to `::windows_core` paths, so the crate is a direct dependency, and its version must equal the one `windows` uses. A lone `windows-core` 0.62 -> 0.100 bump linked two copies and broke the COM traits in `src/recycle_bin.rs`.
 - The job has a time limit. The Recycle Bin tests take their folder, drive and admin share from the system temp folder, not from a fixed path.
 
 ## [1.1.0] - 2026-05-01
