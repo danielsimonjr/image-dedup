@@ -4,21 +4,26 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Removed
+- The project is a command-line tool only. These parts are gone:
+  - The Tauri v2 GUI: `src-tauri/`, `frontend/`, `package.json` and `app-icon.png`.
+  - The Python path: the Tkinter GUI (`dedup_gui.py`), its fallback engine (`dedup_engine.py`), the PyO3 crate `dedup_core` (root `Cargo.toml` and `src/lib.rs`), `pyproject.toml`, `requirements.txt` and the Python tests.
+  - The `crate-sync-checker` agent and the `sync-algorithm` skill. They compared the removed crates.
+  - The `rust`, `tauri` and `python` CI jobs, and the `pip` Dependabot ecosystem.
+
+### Changed
+- The `imgdedup` crate moved from `cli/` to the repository root. `Cargo.toml`, `src/` and `tests/` live at the top level. The README, CLAUDE.md and the CI job use the new paths.
+
 ### Fixed
-- `cli/`: replaced the `trash` crate with an own `recycle()` that cannot delete permanently. The `trash` crate reported success and destroyed a file on a network-form path (`\\localhost\C$\...`) that has no Recycle Bin. The new code uses `IFileOperation` with a progress sink. `PreDeleteItem` returns `E_ABORT` when Windows clears `TSF_DELETE_RECYCLE_IF_POSSIBLE`. `PostDeleteItem` must report a new bin item, or the call is an error. A vetoed file stays in place and is reported as failed. Dependencies: `windows` 0.62 and `windows-core` 0.62 replace `trash`.
+- Replaced the `trash` crate with an own `recycle()` that cannot delete permanently. The `trash` crate reported success and destroyed a file on a network-form path (`\localhost\C$\...`) that has no Recycle Bin. The new code uses `IFileOperation` with a progress sink. `PreDeleteItem` returns `E_ABORT` when Windows clears `TSF_DELETE_RECYCLE_IF_POSSIBLE`. `PostDeleteItem` must report a new bin item, or the call is an error. A vetoed file stays in place and is reported as failed. Dependencies: `windows` 0.62 and `windows-core` 0.62 replace `trash`.
 
 ### Added
-- `cli/`: a new pure-Rust crate `imgdedup` (library and binary) with no tauri, pyo3 or tokio dependency. The binary finds duplicate images, writes a tab-separated report and sends the DELETE copies to the Recycle Bin with `--apply` (dry run by default). Options: `--flat`, `--min-width`, `--min-height`, `--phash-threshold`, `--ssim-threshold`, `--include-low-confidence`, `--report`, `--threads`. Low-confidence copies are held as REVIEW. Before each delete the tool checks that the copy and its keeper keep the scanned size and modified time. Symbolic links and junctions are never followed. Exit code 3 means at least one delete failed.
-- The `cli/` crate ports the `src-tauri/src/lib.rs` algorithm and is now the reference implementation. Pointing `src-tauri` at it, to end the duplicated code, is a follow-up.
-- Tests for the new crate: hashes, SSIM, confidence rule, Union-Find, keeper rule, 50-megapixel guard, scan, report, apply with an injected delete function, the binary, and a copy of `test_images/`.
+- A pure-Rust crate `imgdedup` (library and binary). The binary finds duplicate images, writes a tab-separated report and sends the DELETE copies to the Recycle Bin with `--apply` (dry run by default). Options: `--flat`, `--min-width`, `--min-height`, `--phash-threshold`, `--ssim-threshold`, `--include-low-confidence`, `--report`, `--threads`. Low-confidence copies are held as REVIEW. Before each delete the tool checks that the copy and its keeper keep the scanned size and modified time. Symbolic links and junctions are never followed. Exit code 3 means at least one delete failed.
+- Tests for the crate: hashes, SSIM, confidence rule, Union-Find, keeper rule, 50-megapixel guard, scan, report, apply with an injected delete function, the binary, and a copy of `test_images/`.
 
 ### CI
-- New `cli` job on `windows-latest`: `cargo fmt --check`, `cargo clippy --all-targets -D warnings` and `cargo test` in `cli/`. The `rust` job builds only the root PyO3 crate, so no job compiled `cli/` before.
-- Every CI job has a time limit. The `tauri` job's apt step stops a stalled connection after 30 s and retries it, so a slow package mirror fails the step instead of holding the runner for hours.
-- `cli/` is now formatted with `cargo fmt`. The Recycle Bin tests take their folder, drive and admin share from the system temp folder, not from a fixed path.
-
-### Security
-- Bumped `pyo3` `0.25 → 0.29` in the legacy `dedup_core` Python-extension crate, resolving a HIGH and a MEDIUM advisory against pyo3 `< 0.29`. The bindings (`src/lib.rs`) compile unchanged under 0.29 — `cargo build --release` is clean (two forward-compat `FromPyObject` deprecation notices only). The `dedup_core` module is consumed by `dedup_gui.py`.
+- One `cli` job on `windows-latest`: `cargo fmt --check`, `cargo clippy --all-targets -D warnings` and `cargo test`.
+- The job has a time limit. The Recycle Bin tests take their folder, drive and admin share from the system temp folder, not from a fixed path.
 
 ## [1.1.0] - 2026-05-01
 
