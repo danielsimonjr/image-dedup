@@ -12,6 +12,10 @@ All notable changes to this project will be documented in this file.
 - The `cli/` crate ports the `src-tauri/src/lib.rs` algorithm and is now the reference implementation. Pointing `src-tauri` at it, to end the duplicated code, is a follow-up.
 - Tests for the new crate: hashes, SSIM, confidence rule, Union-Find, keeper rule, 50-megapixel guard, scan, report, apply with an injected delete function, the binary, and a copy of `test_images/`.
 
+### CI
+- New `cli` job on `windows-latest`: `cargo fmt --check`, `cargo clippy --all-targets -D warnings` and `cargo test` in `cli/`. The `rust` job builds only the root PyO3 crate, so no job compiled `cli/` before.
+- `cli/` is now formatted with `cargo fmt`. The Recycle Bin tests take their folder, drive and admin share from the system temp folder, not from a fixed path.
+
 ### Security
 - Bumped `pyo3` `0.25 → 0.29` in the legacy `dedup_core` Python-extension crate, resolving a HIGH and a MEDIUM advisory against pyo3 `< 0.29`. The bindings (`src/lib.rs`) compile unchanged under 0.29 — `cargo build --release` is clean (two forward-compat `FromPyObject` deprecation notices only). The `dedup_core` module is consumed by `dedup_gui.py`.
 
