@@ -22,7 +22,8 @@ All notable changes to this project will be documented in this file.
 - Tests for the crate: hashes, SSIM, confidence rule, Union-Find, keeper rule, 50-megapixel guard, scan, report, apply with an injected delete function, the binary, and a copy of `test_images/`.
 
 ### CI
-- One `cli` job on `windows-latest`: `cargo fmt --check`, `cargo clippy --all-targets -D warnings` and `cargo test`.
+- One `cli` job on `windows-latest`: `cargo fmt --check`, `cargo clippy --locked --all-targets -D warnings` and `cargo test --locked`.
+- `Cargo.lock` is tracked. A binary crate builds the same dependency versions in CI and on every machine, and Dependabot's `cargo` updates bump the lockfile. `--locked` fails the build when `Cargo.lock` does not match `Cargo.toml`.
 - The job has a time limit. The Recycle Bin tests take their folder, drive and admin share from the system temp folder, not from a fixed path.
 
 ## [1.1.0] - 2026-05-01
