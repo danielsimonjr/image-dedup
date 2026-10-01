@@ -6,7 +6,10 @@ use std::path::Path;
 use std::process::{Command, Output};
 
 fn run(args: &[&std::ffi::OsStr]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_imgdedup")).args(args).output().expect("run imgdedup")
+    Command::new(env!("CARGO_BIN_EXE_imgdedup"))
+        .args(args)
+        .output()
+        .expect("run imgdedup")
 }
 
 fn run_str(args: &[&str]) -> Output {
@@ -44,7 +47,12 @@ fn usage_errors_go_to_stderr_with_exit_one() {
     ];
     for args in cases {
         let o = run_str(&args);
-        assert_eq!(o.status.code(), Some(1), "args {args:?}: stderr {}", text(&o.stderr));
+        assert_eq!(
+            o.status.code(),
+            Some(1),
+            "args {args:?}: stderr {}",
+            text(&o.stderr)
+        );
         assert!(o.stdout.is_empty(), "args {args:?} wrote to stdout");
         assert!(text(&o.stderr).contains("imgdedup:"), "args {args:?}");
     }
@@ -63,7 +71,11 @@ fn dry_run_deletes_nothing_and_writes_the_report() {
     let out = tempfile::tempdir().unwrap();
     dup_tree(dir.path());
     let report = out.path().join("r.tsv");
-    let o = run(&[dir.path().as_os_str(), "--report".as_ref(), report.as_os_str()]);
+    let o = run(&[
+        dir.path().as_os_str(),
+        "--report".as_ref(),
+        report.as_os_str(),
+    ]);
     assert_eq!(o.status.code(), Some(0), "stderr: {}", text(&o.stderr));
     let stdout = text(&o.stdout);
     assert!(stdout.contains("DRY RUN"), "{stdout}");
@@ -72,7 +84,10 @@ fn dry_run_deletes_nothing_and_writes_the_report() {
     for f in ["a.png", "other.png"] {
         assert!(dir.path().join(f).exists());
     }
-    assert!(dir.path().join("sub").join("a_small.png").exists(), "a dry run must delete nothing");
+    assert!(
+        dir.path().join("sub").join("a_small.png").exists(),
+        "a dry run must delete nothing"
+    );
     let rep = fs::read_to_string(&report).unwrap();
     let rows: Vec<Vec<&str>> = rep.lines().map(|l| l.split('\t').collect()).collect();
     assert_eq!(rows[0][..2], ["group", "action"]);
@@ -88,7 +103,12 @@ fn flat_scans_only_the_root_folder() {
     let out = tempfile::tempdir().unwrap();
     dup_tree(dir.path());
     let report = out.path().join("r.tsv");
-    let o = run(&[dir.path().as_os_str(), "--flat".as_ref(), "--report".as_ref(), report.as_os_str()]);
+    let o = run(&[
+        dir.path().as_os_str(),
+        "--flat".as_ref(),
+        "--report".as_ref(),
+        report.as_os_str(),
+    ]);
     assert_eq!(o.status.code(), Some(0));
     let stdout = text(&o.stdout);
     assert!(stdout.contains("images scanned: 2"), "{stdout}");
@@ -101,7 +121,13 @@ fn min_size_filters_are_reported_as_skips() {
     let out = tempfile::tempdir().unwrap();
     dup_tree(dir.path());
     let report = out.path().join("r.tsv");
-    let o = run(&[dir.path().as_os_str(), "--min-width".as_ref(), "150".as_ref(), "--report".as_ref(), report.as_os_str()]);
+    let o = run(&[
+        dir.path().as_os_str(),
+        "--min-width".as_ref(),
+        "150".as_ref(),
+        "--report".as_ref(),
+        report.as_os_str(),
+    ]);
     assert_eq!(o.status.code(), Some(0));
     let stdout = text(&o.stdout);
     assert!(stdout.contains("1 too small"), "{stdout}");

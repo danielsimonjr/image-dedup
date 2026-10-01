@@ -35,7 +35,10 @@ fn phash_survives_resize() {
 #[test]
 fn phash_separates_different_pictures() {
     for (a, b) in [(1, 2), (3, 4), (5, 8)] {
-        let d = hamming_distance(compute_phash(&scene(a, 256, 256)), compute_phash(&scene(b, 256, 256)));
+        let d = hamming_distance(
+            compute_phash(&scene(a, 256, 256)),
+            compute_phash(&scene(b, 256, 256)),
+        );
         assert!(d > 10, "scenes {a} and {b} too close: {d}");
     }
 }
@@ -59,7 +62,10 @@ fn dhash_survives_resize_and_separates_pictures() {
     let small = compute_dhash(&scene(1, 128, 96));
     assert!(hamming_distance(big, small) <= 10);
     for (a, b) in [(1, 2), (3, 4)] {
-        let d = hamming_distance(compute_dhash(&scene(a, 256, 256)), compute_dhash(&scene(b, 256, 256)));
+        let d = hamming_distance(
+            compute_dhash(&scene(a, 256, 256)),
+            compute_dhash(&scene(b, 256, 256)),
+        );
         assert!(d > 10, "scenes {a} and {b} too close: {d}");
     }
 }

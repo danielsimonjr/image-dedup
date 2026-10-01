@@ -131,13 +131,19 @@ pub fn hamming_distance(a: u64, b: u64) -> u32 {
 /// Perceptual hash: 32x32 grayscale, 2D DCT, top-left 8x8 block, bits above the median.
 pub fn compute_phash(img: &GrayImage) -> u64 {
     const N: usize = 32;
-    let resized = image::imageops::resize(img, N as u32, N as u32, image::imageops::FilterType::Lanczos3);
+    let resized = image::imageops::resize(
+        img,
+        N as u32,
+        N as u32,
+        image::imageops::FilterType::Lanczos3,
+    );
 
     // cos_table[k * N + i] = cos((2i + 1) * k * PI / 64), evaluated exactly as in the reference.
     let mut cos_table = [0.0f64; N * N];
     for k in 0..N {
         for i in 0..N {
-            cos_table[k * N + i] = ((2 * i + 1) as f64 * k as f64 * std::f64::consts::PI / 64.0).cos();
+            cos_table[k * N + i] =
+                ((2 * i + 1) as f64 * k as f64 * std::f64::consts::PI / 64.0).cos();
         }
     }
 
@@ -247,7 +253,10 @@ pub struct UnionFind {
 
 impl UnionFind {
     pub fn new(n: usize) -> Self {
-        UnionFind { parent: (0..n).collect(), rank: vec![0; n] }
+        UnionFind {
+            parent: (0..n).collect(),
+            rank: vec![0; n],
+        }
     }
 
     pub fn find(&mut self, mut x: usize) -> usize {
@@ -302,7 +311,9 @@ pub fn build_groups(images: &[ImageInfo], edges: &[Edge]) -> Vec<Group> {
     let mut pair_score: HashMap<(usize, usize), f64> = HashMap::new();
     let mut low_roots: HashSet<usize> = HashSet::new();
     for e in edges {
-        pair_score.entry((e.a.min(e.b), e.a.max(e.b))).or_insert(e.score);
+        pair_score
+            .entry((e.a.min(e.b), e.a.max(e.b)))
+            .or_insert(e.score);
         if !e.high {
             low_roots.insert(uf.find(e.a));
         }
@@ -321,18 +332,29 @@ pub fn build_groups(images: &[ImageInfo], edges: &[Edge]) -> Vec<Group> {
             .iter()
             .map(|&d| Duplicate {
                 info: images[d].clone(),
-                ssim: pair_score.get(&(d.min(keeper_idx), d.max(keeper_idx))).copied().unwrap_or(0.0),
+                ssim: pair_score
+                    .get(&(d.min(keeper_idx), d.max(keeper_idx)))
+                    .copied()
+                    .unwrap_or(0.0),
             })
             .collect();
 
         groups.push(Group {
             keeper: images[keeper_idx].clone(),
             duplicates,
-            confidence: if low_roots.contains(root) { Confidence::Low } else { Confidence::High },
+            confidence: if low_roots.contains(root) {
+                Confidence::Low
+            } else {
+                Confidence::High
+            },
         });
     }
 
-    groups.sort_by(|a, b| b.reclaimable_bytes().cmp(&a.reclaimable_bytes()).then_with(|| a.keeper.path.cmp(&b.keeper.path)));
+    groups.sort_by(|a, b| {
+        b.reclaimable_bytes()
+            .cmp(&a.reclaimable_bytes())
+            .then_with(|| a.keeper.path.cmp(&b.keeper.path))
+    });
     groups
 }
 
@@ -378,9 +400,13 @@ fn peek_dimensions(path: &Path) -> Result<(u32, u32), String> {
 pub fn load_gray(path: &Path) -> Result<GrayImage, String> {
     let (w, h) = peek_dimensions(path)?;
     if exceeds_pixel_budget(w, h) {
-        return Err(format!("{w}x{h} exceeds the {MAX_DECODE_PIXELS}-pixel limit"));
+        return Err(format!(
+            "{w}x{h} exceeds the {MAX_DECODE_PIXELS}-pixel limit"
+        ));
     }
-    image::open(path).map(|i| i.to_luma8()).map_err(|e| format!("cannot decode: {e}"))
+    image::open(path)
+        .map(|i| i.to_luma8())
+        .map_err(|e| format!("cannot decode: {e}"))
 }
 
 /// Stream MD5 in 64 KiB chunks; returns the hex digest and the byte count read.
@@ -430,11 +456,24 @@ pub fn analyze_file(path: &Path, min_width: u32, min_height: u32) -> FileOutcome
         Ok(r) => r,
         Err(e) => return FileOutcome::Unreadable(format!("cannot hash: {e}")),
     };
-    let unchanged = read == meta.len() && fs::metadata(path).and_then(|m| m.modified()).map(|t| t == modified).unwrap_or(false);
+    let unchanged = read == meta.len()
+        && fs::metadata(path)
+            .and_then(|m| m.modified())
+            .map(|t| t == modified)
+            .unwrap_or(false);
     if !unchanged {
         return FileOutcome::Unreadable("file changed while it was scanned".into());
     }
-    FileOutcome::Image(ImageInfo { path: path.to_path_buf(), width, height, file_size: meta.len(), modified, phash, dhash, md5 })
+    FileOutcome::Image(ImageInfo {
+        path: path.to_path_buf(),
+        width,
+        height,
+        file_size: meta.len(),
+        modified,
+        phash,
+        dhash,
+        md5,
+    })
 }
 
 /// Collect candidate image paths without following symbolic links or junctions.
@@ -443,9 +482,13 @@ fn collect_paths(root: &Path, recursive: bool, report: &mut ScanReport) -> Vec<P
     if recursive {
         for entry in WalkDir::new(root).follow_links(false) {
             match entry {
-                Err(e) => report.unreadable.push((e.path().unwrap_or(root).to_path_buf(), e.to_string())),
+                Err(e) => report
+                    .unreadable
+                    .push((e.path().unwrap_or(root).to_path_buf(), e.to_string())),
                 Ok(e) if e.file_type().is_symlink() => report.links += 1,
-                Ok(e) if e.file_type().is_file() && has_image_extension(e.path()) => paths.push(e.into_path()),
+                Ok(e) if e.file_type().is_file() && has_image_extension(e.path()) => {
+                    paths.push(e.into_path())
+                }
                 Ok(_) => {}
             }
         }
@@ -474,12 +517,18 @@ pub fn scan(root: &Path, opts: &ScanOptions) -> io::Result<ScanReport> {
     if !meta.is_dir() {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            format!("not a plain directory (links are never followed): {}", root.display()),
+            format!(
+                "not a plain directory (links are never followed): {}",
+                root.display()
+            ),
         ));
     }
     let mut report = ScanReport::default();
     let paths = collect_paths(root, opts.recursive, &mut report);
-    let outcomes: Vec<FileOutcome> = paths.par_iter().map(|p| analyze_file(p, opts.min_width, opts.min_height)).collect();
+    let outcomes: Vec<FileOutcome> = paths
+        .par_iter()
+        .map(|p| analyze_file(p, opts.min_width, opts.min_height))
+        .collect();
     for (path, outcome) in paths.into_iter().zip(outcomes) {
         match outcome {
             FileOutcome::Image(i) => report.images.push(i),
@@ -509,9 +558,16 @@ enum PairResult {
 fn compare_pair(images: &[ImageInfo], i: usize, j: usize, ssim_threshold: f64) -> PairResult {
     let (a, b) = (&images[i], &images[j]);
     if !a.md5.is_empty() && a.md5 == b.md5 {
-        return PairResult::Edge(Edge { a: i, b: j, score: 1.0, high: true });
+        return PairResult::Edge(Edge {
+            a: i,
+            b: j,
+            score: 1.0,
+            high: true,
+        });
     }
-    let load = |info: &ImageInfo| load_gray(&info.path).map_err(|e| PairResult::Unreadable(info.path.clone(), e));
+    let load = |info: &ImageInfo| {
+        load_gray(&info.path).map_err(|e| PairResult::Unreadable(info.path.clone(), e))
+    };
     let (img_a, img_b) = match (load(a), load(b)) {
         (Ok(x), Ok(y)) => (x, y),
         (Err(e), _) | (_, Err(e)) => return e,
@@ -519,12 +575,21 @@ fn compare_pair(images: &[ImageInfo], i: usize, j: usize, ssim_threshold: f64) -
     let score = compute_ssim(&img_a, &img_b, SSIM_SIZE);
     match pair_confidence(score, ssim_threshold, hamming_distance(a.dhash, b.dhash)) {
         None => PairResult::Rejected,
-        Some(c) => PairResult::Edge(Edge { a: i, b: j, score, high: c == Confidence::High }),
+        Some(c) => PairResult::Edge(Edge {
+            a: i,
+            b: j,
+            score,
+            high: c == Confidence::High,
+        }),
     }
 }
 
 /// Find duplicate groups among scanned images.
-pub fn find_duplicates(images: &[ImageInfo], phash_threshold: u32, ssim_threshold: f64) -> FindReport {
+pub fn find_duplicates(
+    images: &[ImageInfo],
+    phash_threshold: u32,
+    ssim_threshold: f64,
+) -> FindReport {
     let n = images.len();
     if n < 2 {
         return FindReport::default();
@@ -536,13 +601,17 @@ pub fn find_duplicates(images: &[ImageInfo], phash_threshold: u32, ssim_threshol
             ((i + 1)..n)
                 .filter(move |&j| {
                     let (a, b) = (&images[i], &images[j]);
-                    (!a.md5.is_empty() && a.md5 == b.md5) || hamming_distance(a.phash, b.phash) <= phash_threshold
+                    (!a.md5.is_empty() && a.md5 == b.md5)
+                        || hamming_distance(a.phash, b.phash) <= phash_threshold
                 })
                 .map(move |j| (i, j))
         })
         .collect();
 
-    let results: Vec<PairResult> = pairs.par_iter().map(|&(i, j)| compare_pair(images, i, j, ssim_threshold)).collect();
+    let results: Vec<PairResult> = pairs
+        .par_iter()
+        .map(|&(i, j)| compare_pair(images, i, j, ssim_threshold))
+        .collect();
 
     let mut edges = Vec::new();
     let mut errors: BTreeMap<PathBuf, String> = BTreeMap::new();
@@ -555,7 +624,10 @@ pub fn find_duplicates(images: &[ImageInfo], phash_threshold: u32, ssim_threshol
             }
         }
     }
-    FindReport { groups: build_groups(images, &edges), errors: errors.into_iter().collect() }
+    FindReport {
+        groups: build_groups(images, &edges),
+        errors: errors.into_iter().collect(),
+    }
 }
 
 // ── Plan, report, apply ─────────────────────────────────────────────────
@@ -587,12 +659,17 @@ pub fn group_action(group: &Group, include_low: bool) -> Action {
 }
 
 fn tsv_field(s: &str) -> String {
-    s.replace('\t', "\\t").replace('\n', "\\n").replace('\r', "\\r")
+    s.replace('\t', "\\t")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
 }
 
 /// Write the tab-separated plan: group, action, width, height, bytes, ssim, confidence, path.
 pub fn write_report(groups: &[Group], include_low: bool, out: &mut dyn Write) -> io::Result<()> {
-    writeln!(out, "group\taction\twidth\theight\tbytes\tssim\tconfidence\tpath")?;
+    writeln!(
+        out,
+        "group\taction\twidth\theight\tbytes\tssim\tconfidence\tpath"
+    )?;
     for (n, g) in groups.iter().enumerate() {
         let conf = g.confidence.as_str();
         let k = &g.keeper;
@@ -653,7 +730,11 @@ fn check_unchanged(info: &ImageInfo) -> Result<(), String> {
 /// Delete the DELETE copies through `delete`. Before each delete, the copy and its keeper
 /// must still have the scanned size and modified time; otherwise the copy is left in place.
 /// A failed delete is recorded and the run goes on.
-pub fn apply(groups: &[Group], include_low: bool, delete: &mut dyn FnMut(&Path) -> io::Result<()>) -> Outcome {
+pub fn apply(
+    groups: &[Group],
+    include_low: bool,
+    delete: &mut dyn FnMut(&Path) -> io::Result<()>,
+) -> Outcome {
     let mut out = Outcome::default();
     for g in groups {
         if group_action(g, include_low) != Action::Delete {
@@ -661,7 +742,13 @@ pub fn apply(groups: &[Group], include_low: bool, delete: &mut dyn FnMut(&Path) 
         }
         if let Err(why) = check_unchanged(&g.keeper) {
             for d in &g.duplicates {
-                out.left.push((d.info.path.clone(), format!("keeper changed since scan ({}): {why}", g.keeper.path.display())));
+                out.left.push((
+                    d.info.path.clone(),
+                    format!(
+                        "keeper changed since scan ({}): {why}",
+                        g.keeper.path.display()
+                    ),
+                ));
             }
             continue;
         }
@@ -670,7 +757,8 @@ pub fn apply(groups: &[Group], include_low: bool, delete: &mut dyn FnMut(&Path) 
                 continue; // a keeper is never a delete target
             }
             if let Err(why) = check_unchanged(&d.info) {
-                out.left.push((d.info.path.clone(), format!("changed since scan: {why}")));
+                out.left
+                    .push((d.info.path.clone(), format!("changed since scan: {why}")));
                 continue;
             }
             match delete(&d.info.path) {

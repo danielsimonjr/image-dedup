@@ -70,7 +70,11 @@ fn crc32(data: &[u8]) -> u32 {
     for &b in data {
         crc ^= b as u32;
         for _ in 0..8 {
-            crc = if crc & 1 != 0 { (crc >> 1) ^ 0xEDB8_8320 } else { crc >> 1 };
+            crc = if crc & 1 != 0 {
+                (crc >> 1) ^ 0xEDB8_8320
+            } else {
+                crc >> 1
+            };
         }
     }
     !crc
@@ -100,6 +104,7 @@ pub fn write_bomb_png(path: &Path) {
     f.write_all(&[137u8, 80, 78, 71, 13, 10, 26, 10]).unwrap();
     f.write_all(&[0, 0, 0, 13]).unwrap();
     f.write_all(b"IHDR").unwrap();
-    f.write_all(&[0, 0, 255, 255, 0, 0, 255, 255, 8, 2, 0, 0, 0]).unwrap();
+    f.write_all(&[0, 0, 255, 255, 0, 0, 255, 255, 8, 2, 0, 0, 0])
+        .unwrap();
     f.write_all(&[0u8, 0, 0, 0]).unwrap();
 }
