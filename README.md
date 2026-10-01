@@ -1,90 +1,46 @@
 # Image Dedup
 
-A fast duplicate image finder that uses perceptual hashing (pHash) for candidate detection and SSIM (Structural Similarity Index) for verification. Automatically keeps the highest-resolution version of each duplicate group.
+`imgdedup` is a command-line tool that finds duplicate images. It uses perceptual hashing (pHash) to find candidates. It uses SSIM (Structural Similarity Index) to verify them. It keeps the highest-resolution copy of each group.
 
 ## Features
 
-- **Two-pass detection** — pHash for fast matching, SSIM for accurate verification
-- **Smart keeper selection** — Keeps highest resolution, tie-breaks by file size
-- **Image preview** — Sidebar with Ctrl+Wheel zoom
-- **Sortable & filterable results** — Group, action, resolution, file size, SSIM, path
-- **Safe deletion** — Sends duplicates to Recycle Bin
-- **Configurable** — Minimum image size filter, recursive/flat scan
+- **Two-pass detection:** pHash finds candidates fast. SSIM confirms them.
+- **Keeper rule:** The copy with the most pixels wins. On a tie, the larger file wins.
+- **Dry run by default:** The tool writes a report and deletes nothing until you pass `--apply`.
+- **Safe deletion:** `--apply` sends copies to the Recycle Bin. The tool never deletes permanently.
+- **Configurable:** Set a minimum image size, the thresholds, flat or recursive scan, and the thread count.
 
-## Download
+## Install
 
-Grab the latest standalone `.exe` from the [Releases](https://github.com/danielsimonjr/image-dedup/releases) page — no installation required.
-
-## How It Works
-
-1. **Scan** — Walks the selected directory, loading each image and computing a 64-bit perceptual hash (pHash) and MD5 checksum
-2. **Candidate matching** — Compares pHash values using Hamming distance. Pairs within the threshold are candidate duplicates
-3. **SSIM verification** — Resizes candidate pairs to 256x256 and computes structural similarity. Pairs above the SSIM threshold are confirmed duplicates
-4. **Grouping** — Uses Union-Find to cluster related duplicates. The image with the highest pixel count (resolution) is selected as the keeper
-
-## Build from Source
-
-### Prerequisites
-
-- [Rust](https://rustup.rs/) toolchain
-- [Node.js](https://nodejs.org/)
-
-### Build
+[Rust](https://rustup.rs/) is the only prerequisite.
 
 ```bash
-npm install
-npx tauri build
+cargo install --git https://github.com/danielsimonjr/image-dedup
 ```
 
-The standalone executable will be at `src-tauri/target/release/image-dedup.exe` and the NSIS installer at `src-tauri/target/release/bundle/nsis/ImageDedup_1.0.0_x64-setup.exe`.
-
-### Development
+To build from a checkout:
 
 ```bash
-npx tauri dev    # Dev server with hot reload
-```
-
-## Architecture
-
-The app is built with [Tauri v2](https://v2.tauri.app/) — a Rust backend with a lightweight WebView frontend.
-
-```
-src-tauri/src/lib.rs    Rust backend — pHash, SSIM, file scanning, Tauri IPC commands
-frontend/main.js        JavaScript UI — table rendering, preview, zoom, filtering
-frontend/index.html     HTML structure
-frontend/style.css      Styling
-```
-
-### Core Algorithm (Rust)
-
-| Step | Method | Parameters |
-|------|--------|------------|
-| pHash | Resize to 32x32 grayscale → 2D DCT → top-left 8x8 coefficients → 64-bit hash | Hamming distance ≤ 10 |
-| SSIM | Resize both to 256x256 → structural similarity comparison | Score ≥ 0.90 |
-| Grouping | Union-Find with path compression and union by rank | Keeper = max resolution |
-
-### IPC Commands
-
-| Command | Description |
-|---------|-------------|
-| `scan_images` | Walk directory, compute pHash + MD5 for each image |
-| `find_duplicates` | Compare hashes, verify with SSIM, group results |
-| `get_image_base64` | Load image as base64 for preview |
-| `send_to_trash` | Move files to Recycle Bin |
-
-## Command-line tool (`imgdedup`)
-
-The `cli/` folder holds `imgdedup`, a pure-Rust command-line version of the duplicate finder. It has no GUI, Tauri or Python dependency. It uses the same algorithm as the desktop app.
-
-### Build
-
-```bash
-cd cli
-cargo build --release    # binary: cli/target/release/imgdedup
+cargo build --release    # binary: target/release/imgdedup
 cargo test               # unit and end-to-end tests
 ```
 
-### Usage
+The Recycle Bin code uses the Windows shell. The tool builds on other systems, but `--apply` works on Windows only.
+
+## How It Works
+
+1. **Scan:** The tool walks the root folder. It computes a 64-bit pHash, a dHash and an MD5 checksum for each image.
+2. **Candidate matching:** The tool compares pHash values with Hamming distance. A pair within the threshold is a candidate. Byte-identical files are candidates too.
+3. **SSIM verification:** The tool resizes each candidate pair to 256x256 and computes SSIM. A pair at or above the SSIM threshold is a duplicate.
+4. **Grouping:** The tool clusters related duplicates with Union-Find. The image with the most pixels is the keeper.
+
+| Step | Method | Default |
+|------|--------|---------|
+| pHash | Resize to 32x32 grayscale, 2D DCT, top-left 8x8 coefficients, 64-bit hash | Hamming distance at most 10 |
+| SSIM | Resize both images to 256x256, compare structure | Score at least 0.90 |
+| Grouping | Union-Find with path compression and union by rank | Keeper = most pixels |
+
+## Usage
 
 ```text
 imgdedup <ROOT> [--apply] [--flat] [--min-width N] [--min-height N]
@@ -106,7 +62,7 @@ imgdedup <ROOT> [--apply] [--flat] [--min-width N] [--min-height N]
 
 The tool never follows symbolic links or junctions. It skips images that declare more than 50 megapixels.
 
-### Report
+## Report
 
 The report is a tab-separated file with the columns `group`, `action`, `width`, `height`, `bytes`, `ssim`, `confidence` and `path`. The `action` column holds one of these values:
 
@@ -116,11 +72,13 @@ The report is a tab-separated file with the columns `group`, `action`, `width`, 
 
 A match has high confidence when the files are byte-identical, or when SSIM is 0.98 or higher, or when the dHash distance is 10 or less. A group has high confidence only when every match in it has high confidence.
 
+## Recycle Bin
+
 The tool uses the Windows shell `IFileOperation` call with a guard. If Windows cannot send a file to the Recycle Bin (for example, a network path), the tool vetoes the delete. The file stays in place and the report lists it as `FAILED` with the reason. There is no permanent-delete fallback.
 
 With `--apply`, the tool checks each copy and its keeper again before it deletes. If the size or the modified time differs from the scan, the tool leaves the copy and lists it in the report. The tool appends a `result` section to the report with the outcome of each delete.
 
-### Exit codes
+## Exit codes
 
 | Code | Meaning |
 |------|---------|
