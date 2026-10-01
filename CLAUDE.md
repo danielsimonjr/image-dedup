@@ -42,7 +42,7 @@ The project has three front ends. The `cli/` crate is the reference implementati
 ### Command-line tool (reference implementation)
 - **Crate:** `cli/` — package `imgdedup`, library `cli/src/lib.rs` plus binary `cli/src/main.rs`. Pure Rust: no tauri, pyo3 or tokio.
 - **Library:** scan, pHash, dHash, SSIM, confidence rule, Union-Find, keeper rule, report and `apply` (the delete function is injected).
-- **Binary:** dry run by default; `--apply` sends DELETE copies to the Recycle Bin (`trash` crate). See the README for options and exit codes.
+- **Binary:** dry run by default; `--apply` sends DELETE copies to the Recycle Bin through `cli/src/recycle_bin.rs` (`IFileOperation` with a veto guard; no permanent-delete fallback). `src-tauri` still uses the `trash` crate, which destroys a file on a path with no Recycle Bin: switching it to `imgdedup::recycle` is part of the follow-up. See the README for options and exit codes.
 - **Follow-up:** point `src-tauri` at this crate to end the duplication.
 
 ### Tauri v2 (current)

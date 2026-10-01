@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- `cli/`: replaced the `trash` crate with an own `recycle()` that cannot delete permanently. The `trash` crate reported success and destroyed a file on a network-form path (`\\localhost\C$\...`) that has no Recycle Bin. The new code uses `IFileOperation` with a progress sink. `PreDeleteItem` returns `E_ABORT` when Windows clears `TSF_DELETE_RECYCLE_IF_POSSIBLE`. `PostDeleteItem` must report a new bin item, or the call is an error. A vetoed file stays in place and is reported as failed. Dependencies: `windows` 0.62 and `windows-core` 0.62 replace `trash`.
+
 ### Added
 - `cli/`: a new pure-Rust crate `imgdedup` (library and binary) with no tauri, pyo3 or tokio dependency. The binary finds duplicate images, writes a tab-separated report and sends the DELETE copies to the Recycle Bin with `--apply` (dry run by default). Options: `--flat`, `--min-width`, `--min-height`, `--phash-threshold`, `--ssim-threshold`, `--include-low-confidence`, `--report`, `--threads`. Low-confidence copies are held as REVIEW. Before each delete the tool checks that the copy and its keeper keep the scanned size and modified time. Symbolic links and junctions are never followed. Exit code 3 means at least one delete failed.
 - The `cli/` crate ports the `src-tauri/src/lib.rs` algorithm and is now the reference implementation. Pointing `src-tauri` at it, to end the duplicated code, is a follow-up.
