@@ -14,6 +14,7 @@ All notable changes to this project will be documented in this file.
 
 ### CI
 - New `cli` job on `windows-latest`: `cargo fmt --check`, `cargo clippy --all-targets -D warnings` and `cargo test` in `cli/`. The `rust` job builds only the root PyO3 crate, so no job compiled `cli/` before.
+- Every CI job has a time limit. The `tauri` job's apt step stops a stalled connection after 30 s and retries it, so a slow package mirror fails the step instead of holding the runner for hours.
 - `cli/` is now formatted with `cargo fmt`. The Recycle Bin tests take their folder, drive and admin share from the system temp folder, not from a fixed path.
 
 ### Security
