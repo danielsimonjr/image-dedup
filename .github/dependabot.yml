@@ -8,6 +8,11 @@ updates:
     groups:
       rust:
         patterns: ["*"]
+    # #[windows::core::implement] expands to ::windows_core paths, so windows-core is a direct
+    # dependency. Its version must equal the windows-core that `windows` itself uses; a lone
+    # windows-core bump links two copies and breaks the COM traits. Bump it with `windows` by hand.
+    ignore:
+      - dependency-name: windows-core
     commit-message:
       prefix: chore
     labels: [dependencies, rust]
