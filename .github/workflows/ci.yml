@@ -46,6 +46,20 @@ jobs:
       - run: cargo test --lib
         working-directory: src-tauri
 
+  # Command-line tool (cli/): the reference implementation of the algorithm. Windows,
+  # because recycle() and its Recycle Bin tests use IFileOperation, which is Windows-only.
+  cli:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: cli
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: rustup component add rustfmt clippy
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+
   # Python fallback engine (dedup_engine) + security tests.
   python:
     runs-on: ubuntu-latest
