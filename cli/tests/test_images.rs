@@ -10,7 +10,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 fn fixture_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("test_images")
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("test_images")
 }
 
 /// (file, width, height, bytes) as measured from the files.
@@ -52,13 +54,25 @@ fn fixture_files_have_the_dimensions_the_expectations_assume() {
         assert_eq!(fs::metadata(&p).unwrap().len(), bytes, "{file} size");
     }
     let count = fs::read_dir(fixture_dir()).unwrap().count();
-    assert_eq!(count, EXPECTED_FILES.len(), "an unlisted file appeared in test_images/");
+    assert_eq!(
+        count,
+        EXPECTED_FILES.len(),
+        "an unlisted file appeared in test_images/"
+    );
 }
 
 #[test]
 fn test_images_group_by_picture_and_keep_the_best_copy() {
     let dir = copy_fixture();
-    let scanned = scan(dir.path(), &ScanOptions { recursive: true, min_width: 0, min_height: 0 }).unwrap();
+    let scanned = scan(
+        dir.path(),
+        &ScanOptions {
+            recursive: true,
+            min_width: 0,
+            min_height: 0,
+        },
+    )
+    .unwrap();
     assert_eq!(scanned.images.len(), 14);
     assert!(scanned.unreadable.is_empty() && scanned.too_small == 0 && scanned.too_large == 0);
 
@@ -68,18 +82,38 @@ fn test_images_group_by_picture_and_keep_the_best_copy() {
     // (keeper, copies). Keeper = most pixels; equal pixels -> larger file.
     // Copies are listed in keeper order (pixels desc, bytes desc, path asc).
     let expected: Vec<(&str, Vec<&str>)> = vec![
-        ("city_backup.jpg", vec!["city_photo.png", "city_photo_copy.png"]), // same 1024x768; the JPEG file is larger
-        ("sunset_1920x1080.jpg", vec!["sunset_1280x720.jpg", "sunset_800x450.jpg", "sunset_thumbnail.jpg"]),
-        ("mountains_hires.png", vec!["mountains_medium.jpg", "mountains_low_quality.jpg"]),
+        (
+            "city_backup.jpg",
+            vec!["city_photo.png", "city_photo_copy.png"],
+        ), // same 1024x768; the JPEG file is larger
+        (
+            "sunset_1920x1080.jpg",
+            vec![
+                "sunset_1280x720.jpg",
+                "sunset_800x450.jpg",
+                "sunset_thumbnail.jpg",
+            ],
+        ),
+        (
+            "mountains_hires.png",
+            vec!["mountains_medium.jpg", "mountains_low_quality.jpg"],
+        ),
         ("portrait_full.png", vec!["portrait_small.jpg"]),
     ];
     let mut actual: Vec<(String, Vec<String>)> = found
         .groups
         .iter()
-        .map(|g| (name(&g.keeper), g.duplicates.iter().map(|d| name(&d.info)).collect()))
+        .map(|g| {
+            (
+                name(&g.keeper),
+                g.duplicates.iter().map(|d| name(&d.info)).collect(),
+            )
+        })
         .collect();
-    let mut want: Vec<(String, Vec<String>)> =
-        expected.iter().map(|(k, d)| (k.to_string(), d.iter().map(|s| s.to_string()).collect())).collect();
+    let mut want: Vec<(String, Vec<String>)> = expected
+        .iter()
+        .map(|(k, d)| (k.to_string(), d.iter().map(|s| s.to_string()).collect()))
+        .collect();
     actual.sort();
     want.sort();
     assert_eq!(actual, want);
@@ -88,30 +122,62 @@ fn test_images_group_by_picture_and_keep_the_best_copy() {
     let grouped: Vec<String> = found
         .groups
         .iter()
-        .flat_map(|g| std::iter::once(name(&g.keeper)).chain(g.duplicates.iter().map(|d| name(&d.info))))
+        .flat_map(|g| {
+            std::iter::once(name(&g.keeper)).chain(g.duplicates.iter().map(|d| name(&d.info)))
+        })
         .collect();
     for unique in ["beach_unique.png", "forest_unique.jpg"] {
-        assert!(!grouped.iter().any(|n| n == unique), "{unique} must stay unique");
+        assert!(
+            !grouped.iter().any(|n| n == unique),
+            "{unique} must stay unique"
+        );
     }
 
     // The byte-identical copy takes the MD5 path: exact score, high confidence.
-    let city = found.groups.iter().find(|g| name(&g.keeper) == "city_backup.jpg").unwrap();
-    let identical = city.duplicates.iter().find(|d| name(&d.info) == "city_photo_copy.png").unwrap();
-    assert_eq!(identical.info.md5, scanned.images.iter().find(|i| name(i) == "city_photo.png").unwrap().md5);
+    let city = found
+        .groups
+        .iter()
+        .find(|g| name(&g.keeper) == "city_backup.jpg")
+        .unwrap();
+    let identical = city
+        .duplicates
+        .iter()
+        .find(|d| name(&d.info) == "city_photo_copy.png")
+        .unwrap();
+    assert_eq!(
+        identical.info.md5,
+        scanned
+            .images
+            .iter()
+            .find(|i| name(i) == "city_photo.png")
+            .unwrap()
+            .md5
+    );
 }
 
 #[test]
 fn test_images_confidence_is_recorded_per_group() {
     // Characterisation of the current algorithm output on the fixture set.
     let dir = copy_fixture();
-    let scanned = scan(dir.path(), &ScanOptions { recursive: true, min_width: 0, min_height: 0 }).unwrap();
+    let scanned = scan(
+        dir.path(),
+        &ScanOptions {
+            recursive: true,
+            min_width: 0,
+            min_height: 0,
+        },
+    )
+    .unwrap();
     let found = find_duplicates(&scanned.images, 10, 0.90);
     for g in &found.groups {
         eprintln!(
             "group keeper={} confidence={} copies={:?}",
             name(&g.keeper),
             g.confidence.as_str(),
-            g.duplicates.iter().map(|d| (name(&d.info), (d.ssim * 10_000.0).round() / 10_000.0)).collect::<Vec<_>>()
+            g.duplicates
+                .iter()
+                .map(|d| (name(&d.info), (d.ssim * 10_000.0).round() / 10_000.0))
+                .collect::<Vec<_>>()
         );
     }
     assert_eq!(found.groups.len(), 4);

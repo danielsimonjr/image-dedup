@@ -1,8 +1,8 @@
 //! imgdedup - find duplicate images and send the lower-quality copies to the Recycle Bin.
 
 use imgdedup::{
-    apply, find_duplicates, group_action, recycle, scan, write_report, Action, Confidence, Group, Outcome, ScanOptions,
-    MAX_DECODE_PIXELS,
+    apply, find_duplicates, group_action, recycle, scan, write_report, Action, Confidence, Group,
+    Outcome, ScanOptions, MAX_DECODE_PIXELS,
 };
 use std::ffi::OsString;
 use std::io::{self, Write};
@@ -52,7 +52,11 @@ struct Args {
     threads: usize,
 }
 
-fn number<T: std::str::FromStr>(it: &mut impl Iterator<Item = OsString>, flag: &str, what: &str) -> Result<T, String> {
+fn number<T: std::str::FromStr>(
+    it: &mut impl Iterator<Item = OsString>,
+    flag: &str,
+    what: &str,
+) -> Result<T, String> {
     it.next()
         .ok_or_else(|| format!("{flag} needs {what}"))?
         .to_str()
@@ -62,7 +66,10 @@ fn number<T: std::str::FromStr>(it: &mut impl Iterator<Item = OsString>, flag: &
 
 /// Err(empty string) means `--help`.
 fn parse(argv: impl Iterator<Item = OsString>) -> Result<Args, String> {
-    let default_threads = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).min(8);
+    let default_threads = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .min(8);
     let mut a = Args {
         root: PathBuf::new(),
         apply: false,
@@ -83,15 +90,22 @@ fn parse(argv: impl Iterator<Item = OsString>) -> Result<Args, String> {
             Some("--flat") => a.flat = true,
             Some("--include-low-confidence") => a.include_low = true,
             Some("--min-width") => a.min_width = number(&mut it, "--min-width", "a whole number")?,
-            Some("--min-height") => a.min_height = number(&mut it, "--min-height", "a whole number")?,
+            Some("--min-height") => {
+                a.min_height = number(&mut it, "--min-height", "a whole number")?
+            }
             Some("--phash-threshold") => {
-                a.phash_threshold = number(&mut it, "--phash-threshold", "a whole number from 0 to 64")?;
+                a.phash_threshold =
+                    number(&mut it, "--phash-threshold", "a whole number from 0 to 64")?;
                 if a.phash_threshold > 64 {
                     return Err("--phash-threshold needs a whole number from 0 to 64".into());
                 }
             }
             Some("--ssim-threshold") => {
-                a.ssim_threshold = number(&mut it, "--ssim-threshold", "a number above 0 and at most 1")?;
+                a.ssim_threshold = number(
+                    &mut it,
+                    "--ssim-threshold",
+                    "a number above 0 and at most 1",
+                )?;
                 if !(a.ssim_threshold > 0.0 && a.ssim_threshold <= 1.0) {
                     return Err("--ssim-threshold needs a number above 0 and at most 1".into());
                 }
@@ -137,19 +151,37 @@ fn write_results(out: &mut dyn Write, o: &Outcome) -> io::Result<()> {
 fn run(a: Args) -> io::Result<u8> {
     let t = Instant::now();
     // The pool is global; a failure here only means a pool already exists.
-    let _ = rayon::ThreadPoolBuilder::new().num_threads(a.threads).build_global();
+    let _ = rayon::ThreadPoolBuilder::new()
+        .num_threads(a.threads)
+        .build_global();
 
     println!(
         "imgdedup {} - {}",
         env!("CARGO_PKG_VERSION"),
-        if a.apply { "APPLY: DELETE copies go to the Recycle Bin" } else { "DRY RUN: deletes nothing" }
+        if a.apply {
+            "APPLY: DELETE copies go to the Recycle Bin"
+        } else {
+            "DRY RUN: deletes nothing"
+        }
     );
-    println!("root: {}{}", a.root.display(), if a.flat { " (flat)" } else { "" });
+    println!(
+        "root: {}{}",
+        a.root.display(),
+        if a.flat { " (flat)" } else { "" }
+    );
 
-    let opts = ScanOptions { recursive: !a.flat, min_width: a.min_width, min_height: a.min_height };
+    let opts = ScanOptions {
+        recursive: !a.flat,
+        min_width: a.min_width,
+        min_height: a.min_height,
+    };
     let s = scan(&a.root, &opts)?;
     let scanned_bytes: u64 = s.images.iter().map(|i| i.file_size).sum();
-    println!("images scanned: {} ({})", s.images.len(), size(scanned_bytes));
+    println!(
+        "images scanned: {} ({})",
+        s.images.len(),
+        size(scanned_bytes)
+    );
 
     let found = find_duplicates(&s.images, a.phash_threshold, a.ssim_threshold);
     let groups: &[Group] = &found.groups;
@@ -183,9 +215,15 @@ fn run(a: Args) -> io::Result<u8> {
             Action::Keep => {}
         }
     }
-    let low_groups = groups.iter().filter(|g| g.confidence == Confidence::Low).count();
+    let low_groups = groups
+        .iter()
+        .filter(|g| g.confidence == Confidence::Low)
+        .count();
     println!("groups: {} ({} low confidence)", groups.len(), low_groups);
-    println!("copies to delete: {to_delete} ({} reclaimable)", size(reclaim));
+    println!(
+        "copies to delete: {to_delete} ({} reclaimable)",
+        size(reclaim)
+    );
     println!("low-confidence copies held for review: {review}");
 
     let mut report = io::BufWriter::new(std::fs::File::create(&a.report)?);
@@ -209,7 +247,11 @@ fn run(a: Args) -> io::Result<u8> {
         }
     }
     report.flush()?;
-    println!("report: {} ({:.1} s)", std::path::absolute(&a.report)?.display(), t.elapsed().as_secs_f64());
+    println!(
+        "report: {} ({:.1} s)",
+        std::path::absolute(&a.report)?.display(),
+        t.elapsed().as_secs_f64()
+    );
     Ok(code)
 }
 

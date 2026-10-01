@@ -9,7 +9,10 @@ fn edge(a: usize, b: usize, score: f64, high: bool) -> Edge {
 }
 
 fn names(g: &Group) -> Vec<String> {
-    g.duplicates.iter().map(|d| d.info.path.to_string_lossy().into_owned()).collect()
+    g.duplicates
+        .iter()
+        .map(|d| d.info.path.to_string_lossy().into_owned())
+        .collect()
 }
 
 #[test]
@@ -45,7 +48,11 @@ fn union_find_handles_long_chains() {
 
 #[test]
 fn keeper_is_highest_pixel_count() {
-    let imgs = vec![info("small", 100, 100, 9_000), info("big", 400, 300, 1_000), info("mid", 200, 200, 5_000)];
+    let imgs = vec![
+        info("small", 100, 100, 9_000),
+        info("big", 400, 300, 1_000),
+        info("mid", 200, 200, 5_000),
+    ];
     let edges = [edge(0, 1, 0.99, true), edge(1, 2, 0.99, true)];
     let groups = build_groups(&imgs, &edges);
     assert_eq!(groups.len(), 1);
@@ -55,7 +62,11 @@ fn keeper_is_highest_pixel_count() {
 
 #[test]
 fn keeper_tie_breaks_on_larger_file() {
-    let imgs = vec![info("png", 640, 480, 300_000), info("jpg", 640, 480, 150_000), info("webp", 640, 480, 450_000)];
+    let imgs = vec![
+        info("png", 640, 480, 300_000),
+        info("jpg", 640, 480, 150_000),
+        info("webp", 640, 480, 450_000),
+    ];
     let edges = [edge(0, 1, 0.99, true), edge(1, 2, 0.99, true)];
     let groups = build_groups(&imgs, &edges);
     assert_eq!(groups[0].keeper.path, PathBuf::from("webp"));
@@ -82,23 +93,43 @@ fn chains_form_one_group_and_singletons_are_dropped() {
         info("e", 6, 6, 1),
     ];
     // a-b and b-c are linked; a-c are not. d-e form a second pair. "lonely" has no edge.
-    let edges = [edge(0, 1, 0.95, true), edge(2, 1, 0.96, true), edge(4, 5, 1.0, true)];
+    let edges = [
+        edge(0, 1, 0.95, true),
+        edge(2, 1, 0.96, true),
+        edge(4, 5, 1.0, true),
+    ];
     let groups = build_groups(&imgs, &edges);
     assert_eq!(groups.len(), 2);
-    let all: Vec<&ImageInfo> = groups.iter().flat_map(|g| std::iter::once(&g.keeper).chain(g.duplicates.iter().map(|d| &d.info))).collect();
+    let all: Vec<&ImageInfo> = groups
+        .iter()
+        .flat_map(|g| std::iter::once(&g.keeper).chain(g.duplicates.iter().map(|d| &d.info)))
+        .collect();
     assert_eq!(all.len(), 5);
     assert!(all.iter().all(|i| i.path.as_os_str() != "lonely"));
-    let chain = groups.iter().find(|g| g.keeper.path.as_os_str() == "c").expect("chain group");
+    let chain = groups
+        .iter()
+        .find(|g| g.keeper.path.as_os_str() == "c")
+        .expect("chain group");
     assert_eq!(chain.duplicates.len(), 2);
 }
 
 #[test]
 fn score_is_zero_when_the_copy_has_no_direct_edge_to_the_keeper() {
-    let imgs = vec![info("keep", 300, 300, 1), info("b", 200, 200, 1), info("c", 100, 100, 1)];
+    let imgs = vec![
+        info("keep", 300, 300, 1),
+        info("b", 200, 200, 1),
+        info("c", 100, 100, 1),
+    ];
     let edges = [edge(0, 1, 0.99, true), edge(1, 2, 0.95, true)];
     let g = &build_groups(&imgs, &edges)[0];
     assert_eq!(g.keeper.path, PathBuf::from("keep"));
-    let score = |n: &str| g.duplicates.iter().find(|d| d.info.path.as_os_str() == n).unwrap().ssim;
+    let score = |n: &str| {
+        g.duplicates
+            .iter()
+            .find(|d| d.info.path.as_os_str() == n)
+            .unwrap()
+            .ssim
+    };
     assert_eq!(score("b"), 0.99);
     assert_eq!(score("c"), 0.0);
 }
@@ -112,7 +143,11 @@ fn edge_order_does_not_matter_for_scores() {
 
 #[test]
 fn one_low_edge_demotes_the_whole_group() {
-    let imgs = vec![info("a", 30, 30, 1), info("b", 20, 20, 1), info("c", 10, 10, 1)];
+    let imgs = vec![
+        info("a", 30, 30, 1),
+        info("b", 20, 20, 1),
+        info("c", 10, 10, 1),
+    ];
     let all_high = build_groups(&imgs, &[edge(0, 1, 0.99, true), edge(1, 2, 0.99, true)]);
     assert_eq!(all_high[0].confidence, Confidence::High);
     let one_low = build_groups(&imgs, &[edge(0, 1, 0.99, true), edge(1, 2, 0.92, false)]);
