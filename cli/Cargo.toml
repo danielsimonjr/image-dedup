@@ -10,6 +10,10 @@ publish = false
 name = "imgdedup"
 path = "src/lib.rs"
 
+[[bin]]
+name = "imgdedup"
+path = "src/main.rs"
+
 [dependencies]
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "bmp", "tiff", "webp"] }
 rayon = "1.10"
