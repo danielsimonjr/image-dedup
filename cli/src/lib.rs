@@ -682,11 +682,8 @@ pub fn apply(groups: &[Group], include_low: bool, delete: &mut dyn FnMut(&Path) 
     out
 }
 
-/// Send one file to the Recycle Bin / Trash. Never falls back to a permanent delete.
-pub fn recycle(path: &Path) -> io::Result<()> {
-    trash::delete(path).map_err(|e| io::Error::other(e.to_string()))?;
-    if path.exists() {
-        return Err(io::Error::other("still present after the Recycle Bin call"));
-    }
-    Ok(())
-}
+mod recycle_bin;
+
+/// Send one file to the Recycle Bin. Never deletes permanently: when Windows cannot recycle
+/// the file (for example a network path), the file stays and an error is returned.
+pub use recycle_bin::recycle;

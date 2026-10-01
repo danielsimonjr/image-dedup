@@ -116,6 +116,8 @@ The report is a tab-separated file with the columns `group`, `action`, `width`, 
 
 A match has high confidence when the files are byte-identical, or when SSIM is 0.98 or higher, or when the dHash distance is 10 or less. A group has high confidence only when every match in it has high confidence.
 
+The tool uses the Windows shell `IFileOperation` call with a guard. If Windows cannot send a file to the Recycle Bin (for example, a network path), the tool vetoes the delete. The file stays in place and the report lists it as `FAILED` with the reason. There is no permanent-delete fallback.
+
 With `--apply`, the tool checks each copy and its keeper again before it deletes. If the size or the modified time differs from the scan, the tool leaves the copy and lists it in the report. The tool appends a `result` section to the report with the outcome of each delete.
 
 ### Exit codes
